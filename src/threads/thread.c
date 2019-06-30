@@ -353,6 +353,13 @@ thread_get_priority (void)
   return thread_current ()->priority;
 }
 
+bool thread_less (const struct list_elem *_a, const struct list_elem *_b)
+{
+    struct thread *a = list_entry(_a, struct thread, elem);
+    struct thread *b = list_entry(_b, struct thread, elem);
+
+    return a->priority < b->priority;
+}
 /* Sets the current thread's nice value to NICE. */
 void
 thread_set_nice (int nice UNUSED) 
@@ -496,7 +503,12 @@ next_thread_to_run (void)
   if (list_empty (&ready_list))
     return idle_thread;
   else
-    return list_entry (list_pop_front (&ready_list), struct thread, elem);
+  {
+    struct list_elem *e = list_max(&ready_list, thread_less, NULL);
+    struct thread* next = list_entry (e, struct thread, elem);
+    list_remove(e);
+    return next;
+  }
 }
 
 /* Completes a thread switch by activating the new thread's page
