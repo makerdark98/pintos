@@ -208,6 +208,7 @@ thread_create (const char *name, int priority,
 
   /* Add to run queue. */
   thread_unblock (t);
+  thread_yield();
 
   return tid;
 }
@@ -344,21 +345,27 @@ void
 thread_set_priority (int new_priority) 
 {
   thread_current ()->priority = new_priority;
+  thread_yield();
 }
 
 /* Returns the current thread's priority. */
 int
 thread_get_priority (void) 
 {
-  return thread_current ()->priority;
+  return thread_get_priority_from_thread(thread_current ());
+}
+int thread_get_priority_from_thread (struct thread *thread)
+{
+  //unstable
+  return thread->priority;
 }
 
 bool thread_less (const struct list_elem *_a, const struct list_elem *_b)
 {
-    struct thread *a = list_entry(_a, struct thread, elem);
-    struct thread *b = list_entry(_b, struct thread, elem);
+  struct thread *a = list_entry(_a, struct thread, elem);
+  struct thread *b = list_entry(_b, struct thread, elem);
 
-    return a->priority < b->priority;
+  return thread_get_priority_from_thread(a) < thread_get_priority_from_thread(b);
 }
 /* Sets the current thread's nice value to NICE. */
 void
@@ -477,6 +484,7 @@ init_thread (struct thread *t, const char *name, int priority)
   t->priority = priority;
   t->magic = THREAD_MAGIC;
   list_push_back (&all_list, &t->allelem);
+  list_init (&t->holding_semas);
 }
 
 /* Allocates a SIZE-byte frame at the top of thread T's stack and
