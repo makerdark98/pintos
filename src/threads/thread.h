@@ -98,6 +98,7 @@ struct thread
     uint32_t *pagedir;                  /* Page directory. */
 #endif
 
+    struct list holding_locks;
     /* Owned by thread.c. */
     unsigned magic;                     /* Detects stack overflow. */
   };

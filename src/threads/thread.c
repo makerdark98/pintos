@@ -208,7 +208,8 @@ thread_create (const char *name, int priority,
 
   /* Add to run queue. */
   thread_unblock (t);
-  thread_yield();
+  if (t -> priority > thread_get_priority_from_thread(thread_current()))
+    thread_yield();
 
   return tid;
 }
@@ -356,8 +357,26 @@ thread_get_priority (void)
 }
 int thread_get_priority_from_thread (struct thread *thread)
 {
-  //unstable
-  return thread->priority;
+  int max_priority = thread->priority;
+  struct list_elem *e;
+  for (e = list_begin(&thread->holding_locks);
+    e != list_end(&thread->holding_locks);
+    e = list_next(e))
+  {
+    struct lock* lock = list_entry(e, struct lock, elem);
+    struct semaphore *sema = &lock->semaphore;
+    struct list_elem *e1;
+    for (e1 = list_begin(&sema->waiters);
+      e1 != list_end(&sema->waiters);
+      e1 = list_next(e1))
+    {
+      struct thread *t = list_entry (e1, struct thread, elem);
+      ASSERT(is_thread(t));
+      int priority = thread_get_priority_from_thread(t);
+      max_priority = max_priority > priority ? max_priority : priority;
+    }
+  }
+  return max_priority;
 }
 
 bool thread_less (const struct list_elem *_a, const struct list_elem *_b)
@@ -484,7 +503,7 @@ init_thread (struct thread *t, const char *name, int priority)
   t->priority = priority;
   t->magic = THREAD_MAGIC;
   list_push_back (&all_list, &t->allelem);
-  list_init (&t->holding_semas);
+  list_init (&t->holding_locks);
 }
 
 /* Allocates a SIZE-byte frame at the top of thread T's stack and

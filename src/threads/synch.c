@@ -152,6 +152,19 @@ sema_self_test (void)
   printf ("done.\n");
 }
 
+bool sema_less (struct list_elem *_a, struct list_elem *_b)
+{
+  struct semaphore_elem* elem_a =
+      list_entry(_a, struct semaphore_elem, elem);
+  struct semaphore_elem* elem_b = 
+      list_entry(_b, struct semaphore_elem, elem);
+
+  struct list_elem *a = list_max(&elem_a->semaphore.waiters, thread_less , NULL);
+  struct list_elem *b = list_max(&elem_b->semaphore.waiters, thread_less , NULL);
+
+  return thread_less(a, b);
+}
+
 /* Thread function used by sema_self_test(). */
 static void
 sema_test_helper (void *sema_) 
@@ -207,6 +220,7 @@ lock_acquire (struct lock *lock)
 
   sema_down (&lock->semaphore);
   lock->holder = thread_current ();
+  list_push_back(&lock->holder->holding_locks, &lock->elem);
 }
 
 /* Tries to acquires LOCK and returns true if successful or false
@@ -224,8 +238,10 @@ lock_try_acquire (struct lock *lock)
   ASSERT (!lock_held_by_current_thread (lock));
 
   success = sema_try_down (&lock->semaphore);
-  if (success)
+  if (success) {
     lock->holder = thread_current ();
+    list_push_back(&lock->holder->holding_locks, &lock->elem);
+  }
   return success;
 }
 
@@ -240,6 +256,17 @@ lock_release (struct lock *lock)
   ASSERT (lock != NULL);
   ASSERT (lock_held_by_current_thread (lock));
 
+  struct list_elem *e;
+  for (e = list_begin(&lock->holder->holding_locks);
+    e != list_end(&lock->holder->holding_locks);
+    e = list_next(e))
+  {
+    if (lock == list_entry(e, struct lock, elem))
+    {
+      list_remove(e);
+      break;
+    }
+  }
   lock->holder = NULL;
   sema_up (&lock->semaphore);
 }
@@ -255,12 +282,6 @@ lock_held_by_current_thread (const struct lock *lock)
   return lock->holder == thread_current ();
 }
 
-/* One semaphore in a list. */
-struct semaphore_elem 
-  {
-    struct list_elem elem;              /* List element. */
-    struct semaphore semaphore;         /* This semaphore. */
-  };
 
 /* Initializes condition variable COND.  A condition variable
    allows one piece of code to signal a condition and cooperating
@@ -325,10 +346,13 @@ cond_signal (struct condition *cond, struct lock *lock UNUSED)
   ASSERT (!intr_context ());
   ASSERT (lock_held_by_current_thread (lock));
 
-  if (!list_empty (&cond->waiters)) 
-    sema_up (&list_entry (list_pop_front (&cond->waiters),
-                          struct semaphore_elem, elem)->semaphore);
+  if (!list_empty (&cond->waiters))  {
+    struct list_elem *e = list_max(&cond->waiters, sema_less, NULL);
+    list_remove(e);
+    sema_up (&list_entry (e, struct semaphore_elem, elem)->semaphore);
+  }
 }
+
 
 /* Wakes up all threads, if any, waiting on COND (protected by
    LOCK).  LOCK must be held before calling this function.
