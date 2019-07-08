@@ -37,6 +37,8 @@ static struct thread *initial_thread;
 /* Lock used by allocate_tid(). */
 static struct lock tid_lock;
 
+static fxpt_t load_avg;
+
 /* Stack frame for kernel_thread(). */
 struct kernel_thread_frame 
   {
@@ -134,11 +136,52 @@ thread_tick (void)
   else
     kernel_ticks++;
 
+  if (thread_mlfqs)
+  {
+    if (strcmp (t->name, "idle") != 0)
+      t->recent_cpu = fxpt_add_int(t->recent_cpu, 1);
+
+    if (timer_ticks() % 100 == 0)
+    {
+      fxpt_t temp, temp1;
+
+      load_avg = fxpt_add_fx (
+          fxpt_div_int (fxpt_mul_int (load_avg, 59), 60),
+          fxpt_div_int (fxpt_to_fxpt (list_size(&ready_list)
+              + (strcmp(running_thread() -> name, "idle" )== 0 ? 0 : 1)), 60
+            )
+          );
+
+      temp1 = fxpt_mul_int(load_avg, 2);
+      temp = fxpt_div_fxpt(temp1, fxpt_add_int(temp1, 1));
+
+      thread_foreach(thread_update_recent_cpu, &temp);
+
+      if (timer_ticks () % 4 == 0)
+        thread_foreach(thread_update_priority, NULL);
+    }
+
+  }
+
   /* Enforce preemption. */
-  if (++thread_ticks >= TIME_SLICE)
+  if (++thread_ticks >= TIME_SLICE) 
+  {
     intr_yield_on_return ();
+  }
 }
 
+void thread_update_recent_cpu (struct thread *t, void *aux)
+{
+  int temp = *(int*)aux;
+  t->recent_cpu = fxpt_add_int (fxpt_mul_fx (temp, t->recent_cpu), t->nice);
+}
+void thread_update_priority (struct thread *t, void *aux UNUSED)
+{
+  t->priority = 
+    PRI_MAX 
+    - fxpt_to_int_round(fxpt_div_int(t->recent_cpu, 4))
+    - (t->nice * 2);
+}
 /* Prints thread statistics. */
 void
 thread_print_stats (void) 
@@ -311,14 +354,15 @@ thread_exit (void)
 void
 thread_yield (void) 
 {
+  ASSERT (!intr_context ());
   struct thread *cur = thread_current ();
   enum intr_level old_level;
-  
-  ASSERT (!intr_context ());
 
   old_level = intr_disable ();
   if (cur != idle_thread) 
+  {
     list_push_back (&ready_list, &cur->elem);
+  }
   cur->status = THREAD_READY;
   schedule ();
   intr_set_level (old_level);
@@ -357,6 +401,11 @@ thread_get_priority (void)
 }
 int thread_get_priority_from_thread (struct thread *thread)
 {
+  enum intr_level old_level;
+
+  if (thread_mlfqs) return thread->priority;
+
+  old_level = intr_disable ();
   int max_priority = thread->priority;
   struct list_elem *e;
   for (e = list_begin(&thread->holding_locks);
@@ -376,6 +425,8 @@ int thread_get_priority_from_thread (struct thread *thread)
       max_priority = max_priority > priority ? max_priority : priority;
     }
   }
+
+  intr_set_level (old_level);
   return max_priority;
 }
 
@@ -388,33 +439,30 @@ bool thread_less (const struct list_elem *_a, const struct list_elem *_b)
 }
 /* Sets the current thread's nice value to NICE. */
 void
-thread_set_nice (int nice UNUSED) 
+thread_set_nice (int nice) 
 {
-  /* Not yet implemented. */
+  thread_current() -> nice = nice;
 }
 
 /* Returns the current thread's nice value. */
 int
 thread_get_nice (void) 
 {
-  /* Not yet implemented. */
-  return 0;
+  return thread_current() -> nice;
 }
 
 /* Returns 100 times the system load average. */
 int
 thread_get_load_avg (void) 
 {
-  /* Not yet implemented. */
-  return 0;
+  return fxpt_to_int_round(fxpt_mul_int(load_avg, 100));
 }
 
 /* Returns 100 times the current thread's recent_cpu value. */
 int
 thread_get_recent_cpu (void) 
 {
-  /* Not yet implemented. */
-  return 0;
+  return fxpt_to_int_round(fxpt_mul_int(thread_current()->recent_cpu, 100));
 }
 
 /* Idle thread.  Executes when no other thread is ready to run.
@@ -500,7 +548,18 @@ init_thread (struct thread *t, const char *name, int priority)
   t->status = THREAD_BLOCKED;
   strlcpy (t->name, name, sizeof t->name);
   t->stack = (uint8_t *) t + PGSIZE;
-  t->priority = priority;
+  if(thread_mlfqs)
+  {
+    if(strcmp(t->name,"main")==0)
+      t->recent_cpu = 0;
+    else
+      t->recent_cpu = fxpt_div_int(thread_get_recent_cpu(),100);
+
+    priority = PRI_MAX - fxpt_to_int_round(fxpt_div_int(t->recent_cpu,4)) - (t->nice * 2);
+      
+  }
+  else
+    t->priority = priority;
   t->magic = THREAD_MAGIC;
   list_push_back (&all_list, &t->allelem);
   list_init (&t->holding_locks);

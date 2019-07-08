@@ -4,6 +4,7 @@
 #include <debug.h>
 #include <list.h>
 #include <stdint.h>
+#include <fixed_point.h>
 
 /* States in a thread's life cycle. */
 enum thread_status
@@ -99,6 +100,9 @@ struct thread
 #endif
 
     struct list holding_locks;
+
+    fxpt_t recent_cpu;
+    int nice;
     /* Owned by thread.c. */
     unsigned magic;                     /* Detects stack overflow. */
   };
@@ -112,6 +116,8 @@ void thread_init (void);
 void thread_start (void);
 
 void thread_tick (void);
+void thread_update_recent_cpu (struct thread *, void *);
+void thread_update_priority (struct thread *,void *);
 void thread_print_stats (void);
 
 typedef void thread_func (void *aux);

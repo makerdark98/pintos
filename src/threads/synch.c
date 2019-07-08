@@ -123,7 +123,7 @@ sema_up (struct semaphore *sema)
   }
   sema->value++;
   intr_set_level (old_level);
-  if (thread != NULL &&
+  if (thread != NULL && !intr_context() &&
     thread_get_priority_from_thread(thread_current ()) < 
     thread_get_priority_from_thread(thread))
     thread_yield();
