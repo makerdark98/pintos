@@ -51,7 +51,6 @@ process_execute (const char *file_name)
 static void
 start_process (void *file_name_)
 {
-  char *file_name = file_name_;
   char* file_name;
   struct intr_frame if_;
   bool success;
@@ -442,8 +441,6 @@ setup_stack (void **esp)
     {
       success = install_page (((uint8_t *) PHYS_BASE) - PGSIZE, kpage, true);
       if (success)
-        //*esp = PHYS_BASE;
-        *esp = PHYS_BASE - 12;
         *esp = PHYS_BASE;
       else
         palloc_free_page (kpage);
@@ -491,17 +488,12 @@ push_parse_arguments (void **esp, char *file_name, char* save_ptr)
     memcpy(*esp, token, size);
   }
   char *it;
-  for (argc = 0, it = *esp;
-      it < ori_esp;
-      argc ++)
+  for (argc = 0, it = *esp; it < ori_esp; argc ++)
   {
     size = sizeof(it);
     *esp -= size;
     memcpy(*esp, &it, size);
-    while (*it!='\0') 
-    {
-      it ++;
-    }
+    while (*it!='\0') it ++;
     it ++;
   }
   size = sizeof(char**);
