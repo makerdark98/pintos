@@ -18,6 +18,7 @@
 #include "threads/thread.h"
 #include "threads/vaddr.h"
 
+static void push_parse_arguments (void **esp, char *file_name, char* save_ptr);
 static thread_func start_process NO_RETURN;
 static bool load (const char *cmdline, void (**eip) (void), void **esp);
 
@@ -51,8 +52,11 @@ static void
 start_process (void *file_name_)
 {
   char *file_name = file_name_;
+  char* file_name;
   struct intr_frame if_;
   bool success;
+  char *save_ptr;
+  file_name = strtok_r(file_name_, " ", &save_ptr);
 
   /* Initialize interrupt frame and load executable. */
   memset (&if_, 0, sizeof if_);
@@ -61,6 +65,7 @@ start_process (void *file_name_)
   if_.eflags = FLAG_IF | FLAG_MBS;
   success = load (file_name, &if_.eip, &if_.esp);
 
+  push_parse_arguments(&if_.esp, file_name, save_ptr);
   /* If load failed, quit. */
   palloc_free_page (file_name);
   if (!success) 
@@ -439,6 +444,7 @@ setup_stack (void **esp)
       if (success)
         //*esp = PHYS_BASE;
         *esp = PHYS_BASE - 12;
+        *esp = PHYS_BASE;
       else
         palloc_free_page (kpage);
     }
@@ -463,4 +469,49 @@ install_page (void *upage, void *kpage, bool writable)
      address, then map our page there. */
   return (pagedir_get_page (t->pagedir, upage) == NULL
           && pagedir_set_page (t->pagedir, upage, kpage, writable));
+}
+
+static void 
+push_parse_arguments (void **esp, char *file_name, char* save_ptr)
+{
+  char *ori_esp = *esp;
+  int argc;
+  char *token;
+  /* argc is initialized to 1, because already parse file_name */
+  int size;
+  size = strlen(file_name) + 1;
+  *esp -= size;
+  memcpy(*esp, file_name, size);
+  for (token = strtok_r (NULL, " ", &save_ptr);
+      token != NULL;
+      token = strtok_r (NULL, " ", &save_ptr)) 
+  {
+    size = strlen(token) + 1; // increase 1, because \0 character size
+    *esp -= size;
+    memcpy(*esp, token, size);
+  }
+  char *it;
+  for (argc = 0, it = *esp;
+      it < ori_esp;
+      argc ++)
+  {
+    size = sizeof(it);
+    *esp -= size;
+    memcpy(*esp, &it, size);
+    while (*it!='\0') 
+    {
+      it ++;
+    }
+    it ++;
+  }
+  size = sizeof(char**);
+  *esp -= size;
+  memcpy(*esp, *esp + size, size);
+  size = sizeof(int);
+  *esp -= size;
+  memcpy(*esp, &argc, size);
+  int return_address = 0;
+  size = sizeof(int);
+  *esp -= size;
+  memcpy(*esp, &return_address, size);
 }
