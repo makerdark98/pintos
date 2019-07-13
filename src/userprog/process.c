@@ -30,6 +30,7 @@ tid_t
 process_execute (const char *file_name) 
 {
   char *fn_copy;
+  struct thread *t;
   tid_t tid;
 
   /* Make a copy of FILE_NAME.
@@ -43,6 +44,12 @@ process_execute (const char *file_name)
   tid = thread_create (file_name, PRI_DEFAULT, start_process, fn_copy);
   if (tid == TID_ERROR)
     palloc_free_page (fn_copy); 
+
+  /* Configure Parent Thread, Children. */
+  t = thread_get_thread_from_tid(tid);
+  t->parent = thread_current();
+  list_push_back(&t->parent->children, &t->child_elem);
+
   return tid;
 }
 
@@ -63,8 +70,11 @@ start_process (void *file_name_)
   if_.cs = SEL_UCSEG;
   if_.eflags = FLAG_IF | FLAG_MBS;
   success = load (file_name, &if_.eip, &if_.esp);
-
-  push_parse_arguments(&if_.esp, file_name, save_ptr);
+  if (success) 
+  { 
+    push_parse_arguments(&if_.esp, file_name, save_ptr);
+  }
+  
   /* If load failed, quit. */
   palloc_free_page (file_name);
   if (!success) 
@@ -90,8 +100,14 @@ start_process (void *file_name_)
    This function will be implemented in problem 2-2.  For now, it
    does nothing. */
 int
-process_wait (tid_t child_tid UNUSED) 
+process_wait (tid_t child_tid) 
 {
+  struct thread *t = thread_get_thread_from_tid(child_tid);
+  if (thread_is_parent(thread_current(), t))
+  {
+    sema_down(&t->waiting);
+    return t->exit_status;
+  }
   return -1;
 }
 
@@ -471,14 +487,18 @@ install_page (void *upage, void *kpage, bool writable)
 static void 
 push_parse_arguments (void **esp, char *file_name, char* save_ptr)
 {
-  char *ori_esp = *esp;
-  int argc;
-  char *token;
+  char *ori_esp, *token, *it;
+  char **argv;
+  int return_address, argc, size;
   /* argc is initialized to 1, because already parse file_name */
-  int size;
+
+  ori_esp = *esp;
   size = strlen(file_name) + 1;
   *esp -= size;
   memcpy(*esp, file_name, size);
+
+  thread_current()->filename = *esp;
+
   for (token = strtok_r (NULL, " ", &save_ptr);
       token != NULL;
       token = strtok_r (NULL, " ", &save_ptr)) 
@@ -487,23 +507,26 @@ push_parse_arguments (void **esp, char *file_name, char* save_ptr)
     *esp -= size;
     memcpy(*esp, token, size);
   }
-  char *it;
-  for (argc = 0, it = *esp; it < ori_esp; argc ++)
+  it = *esp;
+  size = sizeof(int);
+  *esp -= size;
+  *(int*)*esp = 0;
+  for (argc = 0; it < ori_esp; argc ++)
   {
     size = sizeof(it);
     *esp -= size;
-    memcpy(*esp, &it, size);
+    *(char**)*esp = it;
     while (*it!='\0') it ++;
     it ++;
   }
-  size = sizeof(char**);
+  argv = *esp;
+  size = sizeof(argv);
   *esp -= size;
-  memcpy(*esp, *esp + size, size);
-  size = sizeof(int);
+  *(char***)*esp = argv;
+  size = sizeof(argc);
   *esp -= size;
-  memcpy(*esp, &argc, size);
-  int return_address = 0;
-  size = sizeof(int);
+  *(int*)*esp = argc;
+  return_address = 0;
   *esp -= size;
-  memcpy(*esp, &return_address, size);
+  *(int*)*esp = return_address;
 }

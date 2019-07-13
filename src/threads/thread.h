@@ -5,6 +5,7 @@
 #include <list.h>
 #include <stdint.h>
 #include <fixed_point.h>
+#include "threads/synch.h"
 
 /* States in a thread's life cycle. */
 enum thread_status
@@ -94,10 +95,22 @@ struct thread
     /* Shared between thread.c and synch.c. */
     struct list_elem elem;              /* List element. */
 
-#ifdef USERPROG
     /* Owned by userprog/process.c. */
     uint32_t *pagedir;                  /* Page directory. */
-#endif
+
+    struct thread *parent;
+    struct list children;
+    struct list_elem child_elem;
+    struct list open_file_list;
+
+    int exit_status;
+
+    struct semaphore waiting;
+    char *filename;
+    /*
+
+    struct file *exec;
+    */
 
     struct list holding_locks;
 
@@ -119,6 +132,8 @@ void thread_tick (void);
 void thread_update_recent_cpu (struct thread *, void *);
 void thread_update_priority (struct thread *,void *);
 void thread_print_stats (void);
+struct thread* thread_get_thread_from_tid(tid_t tid);
+bool thread_is_parent(struct thread* parent, struct thread* child);
 
 typedef void thread_func (void *aux);
 tid_t thread_create (const char *name, int priority, thread_func *, void *);

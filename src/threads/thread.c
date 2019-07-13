@@ -190,6 +190,34 @@ thread_print_stats (void)
           idle_ticks, kernel_ticks, user_ticks);
 }
 
+/* Get Thread Pointer from tid */
+struct thread*
+thread_get_thread_from_tid (tid_t tid)
+{
+  struct list_elem *e;
+  for (e = list_begin(&all_list);
+      e != list_end(&all_list);
+      e = list_next(e))
+  {
+    if (list_entry(e, struct thread, allelem) -> tid == tid)
+      return list_entry(e, struct thread, allelem);
+  }
+  return NULL;
+}
+
+/* Check this thread is child thread */
+bool
+thread_is_parent(struct thread *parent, struct thread *child)
+{
+  struct thread *t = child->parent;
+  while (t != NULL) 
+  {
+    if (t == parent) return true;
+    t = t->parent;
+  }
+  return false;
+}
+
 /* Creates a new kernel thread named NAME with the given initial
    PRIORITY, which executes FUNCTION passing AUX as the argument,
    and adds it to the ready queue.  Returns the thread identifier
@@ -249,6 +277,7 @@ thread_create (const char *name, int priority,
 
   intr_set_level (old_level);
 
+  sema_down(&t->waiting);
   /* Add to run queue. */
   thread_unblock (t);
   if (t -> priority > thread_get_priority_from_thread(thread_current()))
@@ -342,9 +371,11 @@ thread_exit (void)
   /* Remove thread from all threads list, set our status to dying,
      and schedule another process.  That process will destroy us
      when it calls thread_schedule_tail(). */
+  struct thread* t = thread_current();
+  sema_up(&t->waiting);
   intr_disable ();
-  list_remove (&thread_current()->allelem);
-  thread_current ()->status = THREAD_DYING;
+  list_remove (&t->allelem);
+  t->status = THREAD_DYING;
   schedule ();
   NOT_REACHED ();
 }
@@ -563,6 +594,9 @@ init_thread (struct thread *t, const char *name, int priority)
   t->magic = THREAD_MAGIC;
   list_push_back (&all_list, &t->allelem);
   list_init (&t->holding_locks);
+  list_init (&t->children);
+  list_init (&t->open_file_list);
+  sema_init(&t->waiting, 1);
 }
 
 /* Allocates a SIZE-byte frame at the top of thread T's stack and
