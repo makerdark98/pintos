@@ -209,6 +209,8 @@ thread_get_thread_from_tid (tid_t tid)
 bool
 thread_is_parent(struct thread *parent, struct thread *child)
 {
+  ASSERT (parent != NULL);
+  ASSERT (child != NULL);
   struct thread *t = child->parent;
   while (t != NULL) 
   {
@@ -216,6 +218,18 @@ thread_is_parent(struct thread *parent, struct thread *child)
     t = t->parent;
   }
   return false;
+}
+
+struct list*
+thread_get_opend_file_list(struct thread *t)
+{
+  struct thread *ancestor;
+  ancestor = t;
+  /* 
+  while (ancestor->parent != NULL)
+    ancestor = ancestor->parent;
+    */
+  return &ancestor->opend_file_list;
 }
 
 /* Creates a new kernel thread named NAME with the given initial
@@ -277,7 +291,7 @@ thread_create (const char *name, int priority,
 
   intr_set_level (old_level);
 
-  sema_down(&t->waiting);
+  sema_down (&t->waiting);
   /* Add to run queue. */
   thread_unblock (t);
   if (t -> priority > thread_get_priority_from_thread(thread_current()))
@@ -367,15 +381,21 @@ thread_exit (void)
 #ifdef USERPROG
   process_exit ();
 #endif
-
   /* Remove thread from all threads list, set our status to dying,
      and schedule another process.  That process will destroy us
      when it calls thread_schedule_tail(). */
   struct thread* t = thread_current();
-  sema_up(&t->waiting);
+  if (t->filename != NULL) 
+  {
+    free(t->filename);
+    t->filename = NULL;
+  }
   intr_disable ();
   list_remove (&t->allelem);
+  sema_up(&t->waiting);
   t->status = THREAD_DYING;
+
+
   schedule ();
   NOT_REACHED ();
 }
@@ -451,7 +471,6 @@ int thread_get_priority_from_thread (struct thread *thread)
       e1 = list_next(e1))
     {
       struct thread *t = list_entry (e1, struct thread, elem);
-      ASSERT(is_thread(t));
       int priority = thread_get_priority_from_thread(t);
       max_priority = max_priority > priority ? max_priority : priority;
     }
@@ -592,11 +611,13 @@ init_thread (struct thread *t, const char *name, int priority)
   else
     t->priority = priority;
   t->magic = THREAD_MAGIC;
+  t->filename = NULL;
   list_push_back (&all_list, &t->allelem);
   list_init (&t->holding_locks);
   list_init (&t->children);
-  list_init (&t->open_file_list);
-  sema_init(&t->waiting, 1);
+  list_init (&t->opend_file_list);
+  list_init (&t->exit_status_list);
+  sema_init (&t->waiting, 1);
 }
 
 /* Allocates a SIZE-byte frame at the top of thread T's stack and

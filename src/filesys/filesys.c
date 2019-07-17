@@ -89,6 +89,17 @@ filesys_remove (const char *name)
 
   return success;
 }
+
+bool
+file_exists (const char *filename)
+{
+  ASSERT (filename != NULL);
+  struct file *f;
+  f = filesys_open (filename);
+  if (f == NULL) return false;
+  file_close(f);
+  return true;
+}
 
 /* Formats the file system. */
 static void

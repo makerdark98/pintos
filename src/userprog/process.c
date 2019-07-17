@@ -47,8 +47,11 @@ process_execute (const char *file_name)
 
   /* Configure Parent Thread, Children. */
   t = thread_get_thread_from_tid(tid);
-  t->parent = thread_current();
-  list_push_back(&t->parent->children, &t->child_elem);
+  if (t != NULL)
+  {
+    t->parent = thread_current();
+    list_push_back (&t->parent->children, &t->child_elem);
+  }
 
   return tid;
 }
@@ -61,7 +64,8 @@ start_process (void *file_name_)
   char* file_name;
   struct intr_frame if_;
   bool success;
-  char *save_ptr;
+  char *save_ptr, *tmp;
+  unsigned tmp_size;
   file_name = strtok_r(file_name_, " ", &save_ptr);
 
   /* Initialize interrupt frame and load executable. */
@@ -69,16 +73,25 @@ start_process (void *file_name_)
   if_.gs = if_.fs = if_.es = if_.ds = if_.ss = SEL_UDSEG;
   if_.cs = SEL_UCSEG;
   if_.eflags = FLAG_IF | FLAG_MBS;
+
   success = load (file_name, &if_.eip, &if_.esp);
   if (success) 
   { 
+    tmp_size = strlen(file_name) + 1;
+    tmp = malloc(tmp_size * sizeof(char));
+    memcpy(tmp, file_name, tmp_size);
+    thread_current() -> filename = tmp;
+
     push_parse_arguments(&if_.esp, file_name, save_ptr);
   }
   
   /* If load failed, quit. */
   palloc_free_page (file_name);
   if (!success) 
+  {
+    thread_current() -> tid = -1;
     thread_exit ();
+  }
 
   /* Start the user process by simulating a return from an
      interrupt, implemented by intr_exit (in
@@ -102,13 +115,34 @@ start_process (void *file_name_)
 int
 process_wait (tid_t child_tid) 
 {
-  struct thread *t = thread_get_thread_from_tid(child_tid);
-  if (thread_is_parent(thread_current(), t))
-  {
+  struct thread *t, *cur;
+  struct list_elem *e;
+  int retval;
+
+  retval = -1;
+
+  t = thread_get_thread_from_tid(child_tid);
+  cur = thread_current();
+
+  if (t != NULL && thread_is_parent(cur, t))
     sema_down(&t->waiting);
-    return t->exit_status;
+
+  for (e = list_begin(&cur->exit_status_list);
+      e != list_end(&cur->exit_status_list);
+      e = list_next(e))
+  {
+    if (list_entry(e, struct exit_status_elem, elem)->tid == child_tid)
+    {
+      retval = list_entry(e, struct exit_status_elem, elem)->exit_status;
+
+      list_remove(e);
+      free(list_entry(e, struct exit_status_elem, elem));
+
+      break;
+    }
   }
-  return -1;
+
+  return retval;
 }
 
 /* Free the current process's resources. */
@@ -496,8 +530,6 @@ push_parse_arguments (void **esp, char *file_name, char* save_ptr)
   size = strlen(file_name) + 1;
   *esp -= size;
   memcpy(*esp, file_name, size);
-
-  thread_current()->filename = *esp;
 
   for (token = strtok_r (NULL, " ", &save_ptr);
       token != NULL;

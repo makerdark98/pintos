@@ -101,9 +101,8 @@ struct thread
     struct thread *parent;
     struct list children;
     struct list_elem child_elem;
-    struct list open_file_list;
-
-    int exit_status;
+    struct list opend_file_list;
+    struct list exit_status_list;
 
     struct semaphore waiting;
     char *filename;
@@ -134,6 +133,7 @@ void thread_update_priority (struct thread *,void *);
 void thread_print_stats (void);
 struct thread* thread_get_thread_from_tid(tid_t tid);
 bool thread_is_parent(struct thread* parent, struct thread* child);
+struct list* thread_get_opend_file_list(struct thread*);
 
 typedef void thread_func (void *aux);
 tid_t thread_create (const char *name, int priority, thread_func *, void *);
@@ -161,5 +161,12 @@ int thread_get_nice (void);
 void thread_set_nice (int);
 int thread_get_recent_cpu (void);
 int thread_get_load_avg (void);
+
+struct exit_status_elem
+{
+  int exit_status;
+  tid_t tid;
+  struct list_elem elem;
+};
 
 #endif /* threads/thread.h */
