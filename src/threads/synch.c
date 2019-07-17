@@ -32,6 +32,8 @@
 #include "threads/interrupt.h"
 #include "threads/thread.h"
 
+bool is_same_lock(const struct list_elem *e, void* aux);
+
 /* Initializes semaphore SEMA to VALUE.  A semaphore is a
    nonnegative integer along with two atomic operators for
    manipulating it:
@@ -152,7 +154,7 @@ sema_self_test (void)
   printf ("done.\n");
 }
 
-bool sema_less (struct list_elem *_a, struct list_elem *_b)
+bool sema_less (const struct list_elem *_a, const struct list_elem *_b, void *aux UNUSED)
 {
   struct semaphore_elem* elem_a =
       list_entry(_a, struct semaphore_elem, elem);
@@ -162,7 +164,7 @@ bool sema_less (struct list_elem *_a, struct list_elem *_b)
   struct list_elem *a = list_max(&elem_a->semaphore.waiters, thread_less , NULL);
   struct list_elem *b = list_max(&elem_b->semaphore.waiters, thread_less , NULL);
 
-  return thread_less(a, b);
+  return thread_less(a, b, NULL);
 }
 
 /* Thread function used by sema_self_test(). */
@@ -257,16 +259,13 @@ lock_release (struct lock *lock)
   ASSERT (lock_held_by_current_thread (lock));
 
   struct list_elem *e;
-  for (e = list_begin(&lock->holder->holding_locks);
-    e != list_end(&lock->holder->holding_locks);
-    e = list_next(e))
-  {
-    if (lock == list_entry(e, struct lock, elem))
-    {
-      list_remove(e);
-      break;
-    }
-  }
+
+  e = list_search(&lock->holder->holding_locks, is_same_lock, (void *)lock);
+
+  ASSERT (e != list_end(&lock->holder->holding_locks));
+
+  list_remove(e);
+
   lock->holder = NULL;
   sema_up (&lock->semaphore);
 }
@@ -368,4 +367,9 @@ cond_broadcast (struct condition *cond, struct lock *lock)
 
   while (!list_empty (&cond->waiters))
     cond_signal (cond, lock);
+}
+
+bool is_same_lock(const struct list_elem *e, void* aux)
+{
+  return (struct lock*)aux == list_entry(e, struct lock, elem);
 }

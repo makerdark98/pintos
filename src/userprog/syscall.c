@@ -1,23 +1,29 @@
 #include "userprog/syscall.h"
 #include <stdio.h>
 #include <syscall-nr.h>
+#include <string.h>
+#include "devices/shutdown.h"
+#include "devices/input.h"
 #include "threads/interrupt.h"
 #include "threads/thread.h"
 #include "threads/vaddr.h"
+#include "threads/malloc.h"
 #include "filesys/file.h"
+#include "filesys/filesys.h"
+#include "userprog/pagedir.h"
+#include "userprog/process.h"
 
 typedef int mapid_t;
 #define READDIR_MAX_LEN 14
 struct lock fd_lock;
 #define CHECK_PTR_VALIDITY(ptr) {                   \
-  if (!( ptr > 0x08048000 && ptr < PHYS_BASE) ||    \
+  if (!( (void*)ptr > (void*)0x08048000 && (void*)ptr < PHYS_BASE) ||    \
      (!pagedir_get_page (                           \
       thread_current ()->pagedir,                   \
       ptr)))                                        \
     syscall_exit(-1);}                               
     
 bool is_same_fd (const struct list_elem *a, void* fd);
-static int get_arg(void* addr);
 static void syscall_handler (struct intr_frame *);
 static void syscall_halt(void);
 static void syscall_exit(int status);
@@ -106,6 +112,9 @@ syscall_handler (struct intr_frame *f)
     case SYS_PAGEFAULT:
       syscall_exit(-1);
       break;
+    case SYS_MMAP:
+      f->eax = (int)syscall_mmap(*(int*)(f->esp + 4), *(char**)(f->esp + 8));
+      break;
     case SYS_MUNMAP:
       syscall_munmap(*(mapid_t*)arg0);
       break;
@@ -116,7 +125,7 @@ syscall_handler (struct intr_frame *f)
       f->eax = syscall_mkdir(*(const char**)arg0);
       break;
     case SYS_READDIR:
-      f->eax = syscall_readdir(*(int*)arg0, *(char*)arg1);
+      f->eax = (int)syscall_readdir(*(int*)arg0, *(char**)arg1);
       break;
     case SYS_ISDIR:
       f->eax = syscall_isdir(*(int*)arg0);
@@ -160,11 +169,10 @@ tid_t syscall_exec(const char *filename)
   CHECK_PTR_VALIDITY(filename);
   
   tid_t tid;
-  struct thread *t;
 
   int i;
   for (i = 0; filename[i] != '\0' && filename[i] !=' '; i++);
-  char* tmp_filename = malloc((i+1) * sizeof(char));
+  char* tmp_filename = (char*)malloc((i+1) * sizeof(char));
   memcpy(tmp_filename, filename, i+1);
   tmp_filename[i] = '\0';
 
@@ -233,7 +241,7 @@ int syscall_filesize (int fd)
   struct list_elem *e;
 
   opend_file_list = thread_get_opend_file_list(thread_current());
-  e = list_search (opend_file_list, is_same_fd, fd);
+  e = list_search (opend_file_list, is_same_fd, (void *)fd);
 
   if (e == list_end(opend_file_list)) return -1;
   of = list_entry(e, struct opend_file, elem);
@@ -266,7 +274,7 @@ int syscall_read (int fd, void *buffer, unsigned size)
   else 
   {
     opend_file_list = thread_get_opend_file_list(thread_current());
-    e = list_search(opend_file_list, is_same_fd, fd);
+    e = list_search(opend_file_list, is_same_fd, (void *)fd);
 
     if (e == list_end(opend_file_list)) return -1;
 
@@ -293,12 +301,13 @@ int syscall_write (int fd, const void *buffer, unsigned size)
     lock_acquire(&file_lock);
     putbuf(buffer, size);
     lock_release(&file_lock);
+    retval = size;
   }
 
   else
   {
     opend_file_list = thread_get_opend_file_list(thread_current());
-    e = list_search(opend_file_list, is_same_fd, fd);
+    e = list_search(opend_file_list, is_same_fd, (void *)fd);
 
     if (e == list_end(opend_file_list)) return -1;
     of = list_entry(e, struct opend_file, elem);
@@ -309,10 +318,10 @@ int syscall_write (int fd, const void *buffer, unsigned size)
   }
   return retval;
 }
-static void syscall_seek (int fd, unsigned position)
+static void syscall_seek (int fd UNUSED, unsigned position UNUSED)
 {
 }
-static unsigned syscall_tell (int fd)
+static unsigned syscall_tell (int fd UNUSED)
 {
   return 0;
 }
@@ -323,7 +332,7 @@ static void syscall_close (int fd)
   struct opend_file *of;
 
   opend_file_list = thread_get_opend_file_list(thread_current());
-  e = list_search(opend_file_list, is_same_fd, fd);
+  e = list_search(opend_file_list, is_same_fd, (void *)fd);
   
   if (e == list_end(opend_file_list)) syscall_exit(-1);
   of = list_entry(e, struct opend_file, elem);
@@ -332,51 +341,33 @@ static void syscall_close (int fd)
   file_close(of->file);
   free(of);
 }
-static mapid_t syscall_mmap (int fd, void *addr)
+static mapid_t syscall_mmap (int fd UNUSED, void *addr UNUSED)
 {
   return 0;
 }
-static void syscall_munmap (mapid_t mapid)
+static void syscall_munmap (mapid_t mapid UNUSED)
 {
 }
-static bool syscall_chdir (const char *dir)
-{
-  return false;
-}
-static bool syscall_mkdir (const char *dir)
+static bool syscall_chdir (const char *dir UNUSED)
 {
   return false;
 }
-static bool syscall_readdir (int fd, char name[READDIR_MAX_LEN + 1])
+static bool syscall_mkdir (const char *dir UNUSED)
 {
   return false;
 }
-static bool syscall_isdir (int fd)
+static bool syscall_readdir (int fd UNUSED, char name[READDIR_MAX_LEN + 1] UNUSED)
 {
   return false;
 }
-static int syscall_inumber (int fd)
+static bool syscall_isdir (int fd UNUSED)
+{
+  return false;
+}
+static int syscall_inumber (int fd UNUSED)
 {
   return 0;
 }
-void
-check_ptr_validity(void * ptr)
-{
-  /*
-  if(!(ptr>0x08048000 && ptr< PHYS_BASE ))
-  {
-    syscall_exit(-1);
-  }
-  void * pointer = pagedir_get_page(thread_current()->pagedir, ptr); //check if mapped
-  if(!pointer)
-  {
-    syscall_exit(-1);
-  }
-  */
-  CHECK_PTR_VALIDITY(ptr);
-  
-}
-
 static int
 allocate_fd (void)
 {

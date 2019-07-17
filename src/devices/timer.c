@@ -3,11 +3,12 @@
 #include <inttypes.h>
 #include <round.h>
 #include <stdio.h>
+#include <list.h>
 #include "devices/pit.h"
 #include "threads/interrupt.h"
 #include "threads/synch.h"
 #include "threads/thread.h"
-#include "lib/kernel/list.h"
+#include "threads/malloc.h"
   
 /* See [8254] for hardware details of the 8254 timer chip. */
 
@@ -32,6 +33,7 @@ static bool too_many_loops (unsigned loops);
 static void busy_wait (int64_t loops);
 static void real_time_sleep (int64_t num, int32_t denom);
 static void real_time_delay (int64_t num, int32_t denom);
+bool timer_less (const struct list_elem *e, void *end_ticks);
 
 /* Sets up the timer to interrupt TIMER_FREQ times per second,
    and registers the corresponding interrupt. */
@@ -41,7 +43,7 @@ timer_init (void)
   pit_configure_channel (0, 2, TIMER_FREQ);
   intr_register_ext (0x20, timer_interrupt, "8254 Timer");
   list_init (&sleep_thread_list);
-  next_awake_ticks = -1 & (1 << 63);
+  next_awake_ticks = 0;
 }
 
 /* Calibrates loops_per_tick, used to implement brief delays. */
@@ -89,44 +91,38 @@ timer_elapsed (int64_t then)
   return timer_ticks () - then;
 }
 
-void push_sleep_list (struct sleep_thread_list_elem* new_node)
+static void 
+push_sleep_list (struct thread *t)
 {
   struct list_elem *e;
-  for ( e = list_begin (&sleep_thread_list); 
-    e != list_end (&sleep_thread_list);
-    e = list_next(e))
-  {
-    struct sleep_thread_list_elem* node =
-      list_entry (e, struct sleep_thread_list_elem, elem);
-    if (new_node->end_ticks < node->end_ticks) 
-    {
-      list_insert(e, &new_node->elem);
-      return;
-    }
-  }
-  list_push_back(&sleep_thread_list, &new_node->elem);
+  e = list_search(&sleep_thread_list, timer_less, (void *)&t->end_ticks);
+  if (e != list_end(&sleep_thread_list))
+    list_insert(e, &t->elem);
+  else
+    list_push_back(&sleep_thread_list, &t->elem);
 }
 
 /* Awake Thread that over timer */
 void
-timer_awake ()
+timer_awake (void)
 {
   struct list_elem *e;
+  struct thread *t;
   
   e = list_begin (&sleep_thread_list);
-  while(e != list_end (&sleep_thread_list))
+  while (e != list_end (&sleep_thread_list))
   {
-    struct sleep_thread_list_elem* node =
-        list_entry (e, struct sleep_thread_list_elem, elem);
-    if (node->end_ticks > ticks)
+    if (list_entry (e, struct thread, elem)->end_ticks > ticks)
     {
-        next_awake_ticks = node->end_ticks;
-        return;
+      next_awake_ticks = list_entry (e, struct thread, elem)->end_ticks;
+      return;
     }
-    thread_unblock(node->p_thread);
+    t = list_entry (e, struct thread, elem);
+
     e = list_remove(e);
-    // free(node);
+    thread_unblock (t);
   }
+
   next_awake_ticks = 0;
 }
 
@@ -141,16 +137,15 @@ timer_sleep (int64_t ticks)
   ASSERT (intr_get_level () == INTR_ON);
   old_level = intr_disable();
 
-  struct sleep_thread_list_elem* node = 
-      malloc (sizeof(struct sleep_thread_list_elem));
-  node->p_thread = thread_current();
-  node->end_ticks = start + ticks;
+  struct thread *t = thread_current ();
+  t->end_ticks = start + ticks;
 
-  next_awake_ticks = next_awake_ticks != 0 && next_awake_ticks < node->end_ticks ? 
-    next_awake_ticks : node->end_ticks;
+  next_awake_ticks = next_awake_ticks != 0 &&
+    next_awake_ticks < t->end_ticks ? 
+    next_awake_ticks : t->end_ticks;
 
-  push_sleep_list(node);
-  thread_block();
+  push_sleep_list (t);
+  thread_block ();
   intr_set_level (old_level);
 }
 
@@ -303,3 +298,10 @@ real_time_delay (int64_t num, int32_t denom)
   ASSERT (denom % 1000 == 0);
   busy_wait (loops_per_tick * num / 1000 * TIMER_FREQ / (denom / 1000)); 
 }
+
+bool timer_less (const struct list_elem *e, void *end_ticks)
+{
+  return *(int64_t*)end_ticks <
+    list_entry(e, struct thread, elem) -> end_ticks;
+}
+

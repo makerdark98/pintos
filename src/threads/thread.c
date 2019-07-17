@@ -11,6 +11,8 @@
 #include "threads/switch.h"
 #include "threads/synch.h"
 #include "threads/vaddr.h"
+#include "devices/timer.h"
+#include "threads/malloc.h"
 #ifdef USERPROG
 #include "userprog/process.h"
 #endif
@@ -480,7 +482,7 @@ int thread_get_priority_from_thread (struct thread *thread)
   return max_priority;
 }
 
-bool thread_less (const struct list_elem *_a, const struct list_elem *_b)
+bool thread_less (const struct list_elem *_a, const struct list_elem *_b, void* aux UNUSED)
 {
   struct thread *a = list_entry(_a, struct thread, elem);
   struct thread *b = list_entry(_b, struct thread, elem);

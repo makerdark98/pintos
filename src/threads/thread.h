@@ -92,6 +92,7 @@ struct thread
     int priority;                       /* Priority. */
     struct list_elem allelem;           /* List element for all threads list. */
 
+    int64_t end_ticks;
     /* Shared between thread.c and synch.c. */
     struct list_elem elem;              /* List element. */
 
@@ -155,7 +156,7 @@ void thread_foreach (thread_action_func *, void *);
 int thread_get_priority (void);
 int thread_get_priority_from_thread (struct thread *);
 void thread_set_priority (int);
-bool thread_less (const struct list_elem *_a, const struct list_elem *_b);
+bool thread_less (const struct list_elem *_a, const struct list_elem *_b, void* aux);
 
 int thread_get_nice (void);
 void thread_set_nice (int);

@@ -22,7 +22,7 @@ void sema_down (struct semaphore *);
 bool sema_try_down (struct semaphore *);
 void sema_up (struct semaphore *);
 void sema_self_test (void);
-bool sema_less (struct list_elem *, struct list_elem *);
+bool sema_less (const struct list_elem *, const struct list_elem *, void*);
 
 /* Lock. */
 struct lock 
