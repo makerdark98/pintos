@@ -9,6 +9,7 @@ struct inode;
 struct opend_file
 {
   int fd;
+  char *filename;
   struct file* file;
   struct list_elem elem;
 };

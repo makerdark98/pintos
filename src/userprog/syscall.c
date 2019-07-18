@@ -24,6 +24,7 @@ struct lock fd_lock;
     syscall_exit(-1);}                               
     
 bool is_same_fd (const struct list_elem *a, void* fd);
+bool is_same_filename (const struct list_elem *a, void* filename);
 static void syscall_handler (struct intr_frame *);
 static void syscall_halt(void);
 static void syscall_exit(int status);
@@ -214,21 +215,38 @@ bool syscall_remove (const char *file)
   return filesys_remove(file);
 }
 static 
-int syscall_open (const char *file)
+int syscall_open (const char *filename)
 {
-  CHECK_PTR_VALIDITY(file);
+  CHECK_PTR_VALIDITY (filename);
   struct file *f;
   struct opend_file* opend;
+  struct list_elem *e;
+  struct list *opend_file_list;
+  struct thread *t;
+  int filename_size;
 
-  if (file == NULL) return -1;
+  if (filename == NULL) return -1;
 
-  f = filesys_open(file);
+  t = thread_current ();
+  opend_file_list = thread_get_opend_file_list (t);
+
+  e = list_search (opend_file_list, is_same_filename, (void *)filename);
+
+  if (e != list_end (opend_file_list))
+    return list_entry (e, struct opend_file, elem)->fd;
+
+  f = filesys_open (filename);
   if (f == NULL) return -1;
 
-  opend = (struct opend_file*) malloc(sizeof(struct opend_file));
+  filename_size = strlen (filename);
+  opend = (struct opend_file*) malloc (sizeof (struct opend_file));
+
+  opend->filename = (char *) malloc (sizeof (char) * (filename_size + 1));
+  memcpy (opend->filename, filename, filename_size + 1);
+
   opend->file = f;
-  opend->fd = allocate_fd();
-  list_push_back (thread_get_opend_file_list(thread_current()), &opend->elem);
+  opend->fd = allocate_fd ();
+  list_push_back (opend_file_list, &opend->elem);
 
   return opend->fd;
 }
@@ -295,6 +313,7 @@ int syscall_write (int fd, const void *buffer, unsigned size)
   struct list *opend_file_list;
   struct opend_file *of;
   struct list_elem *e;
+  struct thread *t;
 
   if (fd == STDOUT_FILENO)
   {
@@ -306,11 +325,13 @@ int syscall_write (int fd, const void *buffer, unsigned size)
 
   else
   {
-    opend_file_list = thread_get_opend_file_list(thread_current());
+    t = thread_current ();
+    opend_file_list = thread_get_opend_file_list(t);
     e = list_search(opend_file_list, is_same_fd, (void *)fd);
 
     if (e == list_end(opend_file_list)) return -1;
     of = list_entry(e, struct opend_file, elem);
+    if (strcmp (of->filename, t->filename) == 0) return 0;
 
     lock_acquire(&file_lock);
     retval = file_write(of->file, buffer, size);
@@ -339,6 +360,8 @@ static void syscall_close (int fd)
 
   list_remove(e);
   file_close(of->file);
+
+  free(of->filename);
   free(of);
 }
 static mapid_t syscall_mmap (int fd UNUSED, void *addr UNUSED)
@@ -382,4 +405,9 @@ allocate_fd (void)
 bool is_same_fd (const struct list_elem *a, void* fd)
 {
   return list_entry(a, struct opend_file, elem)-> fd == (int)fd;
+}
+
+bool is_same_filename (const struct list_elem *a, void* filename)
+{
+  return strcmp (list_entry(a, struct opend_file, elem) -> filename, (char *)filename) == 0;
 }
