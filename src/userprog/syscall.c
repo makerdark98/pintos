@@ -25,6 +25,7 @@ struct lock fd_lock;
     
 bool is_same_fd (const struct list_elem *a, void* fd);
 bool is_same_filename (const struct list_elem *a, void* filename);
+bool is_same_process_filename (const struct list_elem *a, void* filename);
 static void syscall_handler (struct intr_frame *);
 static void syscall_halt(void);
 static void syscall_exit(int status);
@@ -232,10 +233,12 @@ int syscall_open (const char *filename)
 
   e = list_search (opend_file_list, is_same_filename, (void *)filename);
 
-  if (e != list_end (opend_file_list))
-    return list_entry (e, struct opend_file, elem)->fd;
+  if (e != list_end (opend_file_list)) 
+    f = list_entry (e, struct opend_file, elem)->file;
 
-  f = filesys_open (filename);
+  else 
+    f = filesys_open (filename);
+
   if (f == NULL) return -1;
 
   filename_size = strlen (filename);
@@ -312,7 +315,7 @@ int syscall_write (int fd, const void *buffer, unsigned size)
   int retval;
   struct list *opend_file_list;
   struct opend_file *of;
-  struct list_elem *e;
+  struct list_elem *e, *child;
   struct thread *t;
 
   if (fd == STDOUT_FILENO)
@@ -332,6 +335,9 @@ int syscall_write (int fd, const void *buffer, unsigned size)
     if (e == list_end(opend_file_list)) return -1;
     of = list_entry(e, struct opend_file, elem);
     if (strcmp (of->filename, t->filename) == 0) return 0;
+
+    child = list_search (&t->children, is_same_process_filename, (void *)of->filename);
+    if (child != list_end (&t->children)) return 0;
 
     lock_acquire(&file_lock);
     retval = file_write(of->file, buffer, size);
@@ -359,7 +365,10 @@ static void syscall_close (int fd)
   of = list_entry(e, struct opend_file, elem);
 
   list_remove(e);
-  file_close(of->file);
+  e = list_search(opend_file_list, is_same_filename, (void *)of->filename);
+
+  if (e == list_end(opend_file_list))
+    file_close(of->file);
 
   free(of->filename);
   free(of);
@@ -410,4 +419,9 @@ bool is_same_fd (const struct list_elem *a, void* fd)
 bool is_same_filename (const struct list_elem *a, void* filename)
 {
   return strcmp (list_entry(a, struct opend_file, elem) -> filename, (char *)filename) == 0;
+}
+
+bool is_same_process_filename (const struct list_elem *a, void* filename)
+{
+  return strcmp (list_entry(a, struct thread, child_elem) -> filename, (char *)filename) == 0;
 }
