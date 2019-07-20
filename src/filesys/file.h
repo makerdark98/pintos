@@ -8,11 +8,15 @@ struct inode;
 
 struct opend_file
 {
-  int fd;
+  int fd;               /*  */
   char *filename;
-  struct file* file;
-  struct list_elem elem;
+  size_t offset;
+  struct list_elem elem; /* It is used in syscall.c and thread */
 };
+
+
+struct opend_file *opend_file_alloc (const char *filename, int fd);
+void opend_file_free (struct opend_file *opend);
 
 /* Opening and closing files. */
 struct file *file_open (struct inode *);
@@ -35,4 +39,5 @@ void file_seek (struct file *, off_t);
 off_t file_tell (struct file *);
 off_t file_length (struct file *);
 
+bool is_same_filename (const struct list_elem *a, void* filename);
 #endif /* filesys/file.h */

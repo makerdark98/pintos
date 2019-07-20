@@ -1,8 +1,30 @@
 #include "filesys/file.h"
 #include <debug.h>
+#include <string.h>
 #include "filesys/inode.h"
 #include "threads/malloc.h"
 
+struct opend_file *
+opend_file_alloc (const char *filename, int fd)
+{
+  struct opend_file * retval;
+  size_t filename_size;
+
+  filename_size = strlen (filename) + 1;
+  retval = (struct opend_file*) malloc (sizeof(struct opend_file));
+
+  retval->filename = (char *) malloc (filename_size * sizeof (char));
+  memcpy (retval->filename, filename, filename_size);
+  retval->fd = fd;
+  retval->offset = 0;
+
+  return retval;
+}
+void opend_file_free (struct opend_file *opend)
+{
+  free (opend->filename);
+  free (opend);
+}
 /* An open file. */
 struct file 
   {
@@ -165,4 +187,9 @@ file_tell (struct file *file)
 {
   ASSERT (file != NULL);
   return file->pos;
+}
+
+bool is_same_filename (const struct list_elem *a, void* filename)
+{
+  return strcmp (list_entry(a, struct opend_file, elem) -> filename, (char *)filename) == 0;
 }

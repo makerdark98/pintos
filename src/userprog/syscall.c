@@ -16,16 +16,19 @@
 typedef int mapid_t;
 #define READDIR_MAX_LEN 14
 struct lock fd_lock;
+#define SYSCALL_EXIT syscall_exit(-1)
+//#define SYSCALL_EXIT ASSERT(1 != 1)
 #define CHECK_PTR_VALIDITY(ptr) {                   \
-  if (!( (void*)ptr > (void*)0x08048000 && (void*)ptr < PHYS_BASE) ||    \
-     (!pagedir_get_page (                           \
-      thread_current ()->pagedir,                   \
-      ptr)))                                        \
-    syscall_exit(-1);}                               
+  if (!( (void*)ptr > (void*)0x08048000             \
+        && (void*)ptr < PHYS_BASE)                  \
+        || (!pagedir_get_page (                     \
+            thread_current ()->pagedir, ptr)))      \
+    SYSCALL_EXIT;}                               
     
+
 bool is_same_fd (const struct list_elem *a, void* fd);
-bool is_same_filename (const struct list_elem *a, void* filename);
 bool is_same_process_filename (const struct list_elem *a, void* filename);
+bool is_same_tid (const struct list_elem *a, void* tid);
 static void syscall_handler (struct intr_frame *);
 static void syscall_halt(void);
 static void syscall_exit(int status);
@@ -87,7 +90,7 @@ syscall_handler (struct intr_frame *f)
       f->eax = syscall_create(*(const char**)(f->esp + 16), *(unsigned*)(f->esp + 20)); 
       break;
     case SYS_REMOVE:
-      f->eax = syscall_remove(*(const char**)arg0); 
+      f->eax = syscall_remove(*(const char**)(f->esp + 16)); 
       break;
     case SYS_OPEN:
       f->eax = syscall_open(*(const char**)(f->esp + 4));
@@ -103,7 +106,7 @@ syscall_handler (struct intr_frame *f)
         syscall_write(*(int*)(arg0), *(void**)arg1, *(unsigned *)(arg2));
       break;
     case SYS_SEEK:
-      syscall_seek(*(int*)arg0, *(unsigned*)arg1);
+      syscall_seek(*(int*)(f->esp + 16), *(unsigned*)(f->esp + 20));
       break;
     case SYS_TELL:
       syscall_tell(*(int*)arg0);
@@ -112,7 +115,7 @@ syscall_handler (struct intr_frame *f)
       syscall_close(*(int*)(f->esp + 4));
       break;
     case SYS_PAGEFAULT:
-      syscall_exit(-1);
+      SYSCALL_EXIT;
       break;
     case SYS_MMAP:
       f->eax = (int)syscall_mmap(*(int*)(f->esp + 4), *(char**)(f->esp + 8));
@@ -136,7 +139,7 @@ syscall_handler (struct intr_frame *f)
       f->eax = syscall_inumber(*(int*)arg0);
       break;
     default:
-      syscall_exit(-1);
+      SYSCALL_EXIT;
   }
 }
 
@@ -151,15 +154,36 @@ static
 void syscall_exit(int status)
 {
   struct thread *current = thread_current();
-  // TODO : close file list
+  struct exit_status_elem* e;
+  struct list_elem *e1;
+
   if (current->parent != NULL)
   {
-    struct exit_status_elem* e
-      = malloc(sizeof(struct exit_status_elem));
+    e = malloc(sizeof(struct exit_status_elem));
     e->exit_status = status;
     e->tid = current->tid;
     list_push_back(&current->parent->exit_status_list, &e->elem);
+
+    e1 = list_search (&current->parent->children, is_same_tid, (void *)e->tid);
+    list_remove (e1);
   }
+
+  /* 
+  opend_file_list = thread_get_opend_file_list (current);
+  for (e1 = list_begin (opend_file_list);
+      e1 != list_end (opend_file_list);
+      e1 = list_next (e1))
+  {
+    printf("%s :%s closed\n", __func__, 
+        list_entry(e1, struct opend_file, elem) ->filename);
+
+    list_remove (e1);
+    close_opend_file (opend_file_list, 
+        list_entry (e1, struct opend_file, elem));
+    opend_file_free (list_entry(e1, struct opend_file, elem));
+  }
+        */
+
   printf("%s: exit(%d)\n", current->filename, status);
   thread_exit();
 
@@ -171,10 +195,12 @@ tid_t syscall_exec(const char *filename)
   CHECK_PTR_VALIDITY(filename);
   
   tid_t tid;
-
   int i;
+  char *tmp_filename;
+
   for (i = 0; filename[i] != '\0' && filename[i] !=' '; i++);
-  char* tmp_filename = (char*)malloc((i+1) * sizeof(char));
+
+  tmp_filename = (char*)malloc((i+1) * sizeof(char));
   memcpy(tmp_filename, filename, i+1);
   tmp_filename[i] = '\0';
 
@@ -183,7 +209,7 @@ tid_t syscall_exec(const char *filename)
   else 
   {
     tid = process_execute (filename);
-    if (tid == -1) syscall_exit(-1);
+    if (tid == -1) SYSCALL_EXIT;
   }
 
   free(tmp_filename);
@@ -206,49 +232,33 @@ bool syscall_create (const char *file, unsigned initial_size)
 {
   CHECK_PTR_VALIDITY(file);
   if (strcmp(file, "") == 0) 
-    syscall_exit(-1);
+    SYSCALL_EXIT;
   return filesys_create(file, initial_size);
 }
 static 
 bool syscall_remove (const char *file)
 {
   if (file == NULL) return false;
-  return filesys_remove(file);
+  bool retval = filesys_remove(file);
+  return retval;
 }
 static 
 int syscall_open (const char *filename)
 {
   CHECK_PTR_VALIDITY (filename);
-  struct file *f;
+
   struct opend_file* opend;
-  struct list_elem *e;
   struct list *opend_file_list;
   struct thread *t;
-  int filename_size;
 
   if (filename == NULL) return -1;
+
+  if (!file_exists(filename)) return -1;
 
   t = thread_current ();
   opend_file_list = thread_get_opend_file_list (t);
 
-  e = list_search (opend_file_list, is_same_filename, (void *)filename);
-
-  if (e != list_end (opend_file_list)) 
-    f = list_entry (e, struct opend_file, elem)->file;
-
-  else 
-    f = filesys_open (filename);
-
-  if (f == NULL) return -1;
-
-  filename_size = strlen (filename);
-  opend = (struct opend_file*) malloc (sizeof (struct opend_file));
-
-  opend->filename = (char *) malloc (sizeof (char) * (filename_size + 1));
-  memcpy (opend->filename, filename, filename_size + 1);
-
-  opend->file = f;
-  opend->fd = allocate_fd ();
+  opend = opend_file_alloc(filename, allocate_fd());
   list_push_back (opend_file_list, &opend->elem);
 
   return opend->fd;
@@ -258,6 +268,7 @@ int syscall_filesize (int fd)
 {
   int retval = 0;
   struct list *opend_file_list;
+  struct file *file;
   struct opend_file *of;
   struct list_elem *e;
 
@@ -268,7 +279,9 @@ int syscall_filesize (int fd)
   of = list_entry(e, struct opend_file, elem);
 
   lock_acquire(&file_lock);
-  retval = file_length(of->file);
+  file = filesys_open(of->filename);
+  retval = file_length(file);
+  file_close(file);
   lock_release(&file_lock);
 
   return retval;
@@ -282,6 +295,7 @@ int syscall_read (int fd, void *buffer, unsigned size)
   struct list *opend_file_list;
   struct opend_file *of;
   struct list_elem *e;
+  struct file *file;
 
   if (fd == STDIN_FILENO) /* Standard Input */
   {
@@ -301,7 +315,11 @@ int syscall_read (int fd, void *buffer, unsigned size)
 
     of = list_entry(e, struct opend_file, elem);
     lock_acquire(&file_lock);
-    retval = file_read(of->file, buffer, size);
+    file = filesys_open(of->filename);
+    file_seek(file, of->offset);
+    retval = file_read(file, buffer, size);
+    of->offset = file_tell(file);
+    file_close(file);
     lock_release(&file_lock);
   }
 
@@ -317,6 +335,7 @@ int syscall_write (int fd, const void *buffer, unsigned size)
   struct opend_file *of;
   struct list_elem *e, *child;
   struct thread *t;
+  struct file *file;
 
   if (fd == STDOUT_FILENO)
   {
@@ -337,20 +356,58 @@ int syscall_write (int fd, const void *buffer, unsigned size)
     if (strcmp (of->filename, t->filename) == 0) return 0;
 
     child = list_search (&t->children, is_same_process_filename, (void *)of->filename);
-    if (child != list_end (&t->children)) return 0;
+    if (child != list_end (&t->children)) {
+       return 0;
+    }
+
+    if (!file_exists(of->filename))
+    {
+      if (!filesys_create(of->filename, size))
+        return -1;
+    }
 
     lock_acquire(&file_lock);
-    retval = file_write(of->file, buffer, size);
+    file = filesys_open(of->filename);
+    file_seek(file, of->offset);
+
+    retval = file_write (file, buffer, size);
+
+    of->offset = file_tell(file);
+    file_close(file);
     lock_release(&file_lock);
   }
   return retval;
 }
-static void syscall_seek (int fd UNUSED, unsigned position UNUSED)
+
+static void syscall_seek (int fd, unsigned position)
 {
+  struct list_elem *e;
+  struct list *opend_file_list;
+  struct opend_file *of;
+  opend_file_list = thread_get_opend_file_list(thread_current());
+  e = list_search (opend_file_list, is_same_fd, (void *)fd);
+
+  if (e == list_end (opend_file_list)) SYSCALL_EXIT;
+
+  of = list_entry (e, struct opend_file, elem);
+  lock_acquire (&file_lock);
+  of->offset = position;
+  lock_release (&file_lock);
+
 }
-static unsigned syscall_tell (int fd UNUSED)
+static unsigned syscall_tell (int fd)
 {
-  return 0;
+  struct list_elem *e;
+  struct list *opend_file_list;
+  struct opend_file *of;
+
+  opend_file_list = thread_get_opend_file_list(thread_current());
+  e = list_search(opend_file_list, is_same_fd, (void *)fd);
+
+  if (e == list_end(opend_file_list)) SYSCALL_EXIT;
+  of = list_entry(e, struct opend_file, elem);
+
+  return of->offset;
 }
 static void syscall_close (int fd)
 {
@@ -361,17 +418,11 @@ static void syscall_close (int fd)
   opend_file_list = thread_get_opend_file_list(thread_current());
   e = list_search(opend_file_list, is_same_fd, (void *)fd);
   
-  if (e == list_end(opend_file_list)) syscall_exit(-1);
+  if (e == list_end(opend_file_list)) SYSCALL_EXIT;
   of = list_entry(e, struct opend_file, elem);
-
   list_remove(e);
-  e = list_search(opend_file_list, is_same_filename, (void *)of->filename);
 
-  if (e == list_end(opend_file_list))
-    file_close(of->file);
-
-  free(of->filename);
-  free(of);
+  opend_file_free (of);
 }
 static mapid_t syscall_mmap (int fd UNUSED, void *addr UNUSED)
 {
@@ -400,6 +451,7 @@ static int syscall_inumber (int fd UNUSED)
 {
   return 0;
 }
+
 static int
 allocate_fd (void)
 {
@@ -416,12 +468,12 @@ bool is_same_fd (const struct list_elem *a, void* fd)
   return list_entry(a, struct opend_file, elem)-> fd == (int)fd;
 }
 
-bool is_same_filename (const struct list_elem *a, void* filename)
-{
-  return strcmp (list_entry(a, struct opend_file, elem) -> filename, (char *)filename) == 0;
-}
-
 bool is_same_process_filename (const struct list_elem *a, void* filename)
 {
   return strcmp (list_entry(a, struct thread, child_elem) -> filename, (char *)filename) == 0;
+}
+
+bool is_same_tid (const struct list_elem *a, void* tid)
+{
+  return list_entry(a, struct thread, child_elem) -> tid == (tid_t)tid;
 }
