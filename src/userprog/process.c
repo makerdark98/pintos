@@ -31,9 +31,10 @@ tid_t
 process_execute (const char *file_name) 
 {
   char *fn_copy;
-  struct thread *t;
+  struct thread *t, *cur;
   tid_t tid;
 
+  cur = thread_current();
   /* Make a copy of FILE_NAME.
      Otherwise there's a race between the caller and load(). */
   fn_copy = palloc_get_page (0);
@@ -41,6 +42,7 @@ process_execute (const char *file_name)
     return TID_ERROR;
   strlcpy (fn_copy, file_name, PGSIZE);
 
+  sema_down(&cur->exec_sema);
   /* Create a new thread to execute FILE_NAME. */
   tid = thread_create (file_name, PRI_DEFAULT, start_process, fn_copy);
   if (tid == TID_ERROR)
@@ -53,6 +55,29 @@ process_execute (const char *file_name)
     t->parent = thread_current();
     list_push_back (&t->parent->children, &t->child_elem);
   }
+  sema_down(&cur->exec_sema);
+  sema_up(&cur->exec_sema);
+
+  if (!cur->child_load_success){
+    tid = -1;
+  }
+
+  /* 
+  struct list_elem *e1, *e2;
+  e1 = list_search (&cur->children, is_same_tid, (void *)tid);
+  if (e1 == list_end(&cur->children)) {
+    for (e2 = list_begin (&cur->exit_status_list);
+        e2 != list_end (&cur->exit_status_list);
+        e2 = list_next(e2))
+    {
+      if (list_entry(e2, struct exit_status_elem, elem)->tid == tid)
+        break;
+    }
+    if (e2 == list_end (&cur->exit_status_list)) {
+      tid = -1;
+    }
+  }
+  */
 
   return tid;
 }
@@ -89,11 +114,23 @@ start_process (void *file_name_)
   
   /* If load failed, quit. */
   palloc_free_page (file_name);
+  struct thread *current= thread_current();
   if (!success) 
   {
-    thread_current() -> tid = -1;
+    current->parent->child_load_success = false;
+    if (current->parent != NULL)
+    {
+      struct list_elem *e1;
+      e1 = list_search (&current->parent->children, is_same_tid, (void *)current->tid);
+      list_remove (e1);
+    }
+
+    sema_up (&thread_current() -> parent ->exec_sema);
+
     thread_exit ();
   }
+  current->parent->child_load_success = true;
+  sema_up (&thread_current() -> parent ->exec_sema);
 
   /* Start the user process by simulating a return from an
      interrupt, implemented by intr_exit (in
@@ -126,8 +163,9 @@ process_wait (tid_t child_tid)
   t = thread_get_thread_from_tid(child_tid);
   cur = thread_current();
 
-  if (t != NULL && thread_is_parent(cur, t))
+  if (t != NULL && thread_is_parent(cur, t)) {
     sema_down(&t->waiting);
+  }
 
   for (e = list_begin(&cur->exit_status_list);
       e != list_end(&cur->exit_status_list);
@@ -143,7 +181,7 @@ process_wait (tid_t child_tid)
       break;
     }
   }
-
+  
   return retval;
 }
 

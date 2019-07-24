@@ -16,7 +16,7 @@
 typedef int mapid_t;
 #define READDIR_MAX_LEN 14
 struct lock fd_lock;
-#define SYSCALL_EXIT syscall_exit(-1)
+#define SYSCALL_EXIT syscall_exit(-1);
 //#define SYSCALL_EXIT ASSERT(1 != 1)
 #define CHECK_PTR_VALIDITY(ptr) {                   \
   if (!( (void*)ptr > (void*)0x08048000             \
@@ -25,7 +25,6 @@ struct lock fd_lock;
             thread_current ()->pagedir, ptr)))      \
     SYSCALL_EXIT;}                               
     
-
 bool is_same_fd (const struct list_elem *a, void* fd);
 bool is_same_process_filename (const struct list_elem *a, void* filename);
 bool is_same_tid (const struct list_elem *a, void* tid);
@@ -156,6 +155,8 @@ void syscall_exit(int status)
   struct thread *current = thread_current();
   struct exit_status_elem* e;
   struct list_elem *e1;
+  struct list *opend_file_list;
+
 
   if (current->parent != NULL)
   {
@@ -168,21 +169,24 @@ void syscall_exit(int status)
     list_remove (e1);
   }
 
-  /* 
+  e1 = list_begin(&current->exit_status_list);
+  while (e1 != list_end (&current->exit_status_list))
+  {
+    struct exit_status_elem *exit_status = list_entry(e1, struct exit_status_elem, elem);
+    e1 = list_remove (e1);
+    free (exit_status);
+  }
+
   opend_file_list = thread_get_opend_file_list (current);
   for (e1 = list_begin (opend_file_list);
       e1 != list_end (opend_file_list);
-      e1 = list_next (e1))
-  {
-    printf("%s :%s closed\n", __func__, 
-        list_entry(e1, struct opend_file, elem) ->filename);
 
-    list_remove (e1);
-    close_opend_file (opend_file_list, 
-        list_entry (e1, struct opend_file, elem));
-    opend_file_free (list_entry(e1, struct opend_file, elem));
+      )
+  {
+    struct opend_file *of = list_entry(e1, struct opend_file, elem);
+    e1 = list_remove (e1);
+    opend_file_free (of);
   }
-        */
 
   printf("%s: exit(%d)\n", current->filename, status);
   thread_exit();
@@ -209,7 +213,6 @@ tid_t syscall_exec(const char *filename)
   else 
   {
     tid = process_execute (filename);
-    if (tid == -1) SYSCALL_EXIT;
   }
 
   free(tmp_filename);
@@ -220,8 +223,6 @@ static
 int syscall_wait (tid_t tid)
 {
   int result;
-  if (tid == -1) 
-    return -1;
 
   result = process_wait(tid);
 
@@ -242,6 +243,7 @@ bool syscall_remove (const char *file)
   bool retval = filesys_remove(file);
   return retval;
 }
+
 static 
 int syscall_open (const char *filename)
 {
@@ -263,6 +265,7 @@ int syscall_open (const char *filename)
 
   return opend->fd;
 }
+
 static 
 int syscall_filesize (int fd)
 {
@@ -471,9 +474,4 @@ bool is_same_fd (const struct list_elem *a, void* fd)
 bool is_same_process_filename (const struct list_elem *a, void* filename)
 {
   return strcmp (list_entry(a, struct thread, child_elem) -> filename, (char *)filename) == 0;
-}
-
-bool is_same_tid (const struct list_elem *a, void* tid)
-{
-  return list_entry(a, struct thread, child_elem) -> tid == (tid_t)tid;
 }

@@ -620,6 +620,7 @@ init_thread (struct thread *t, const char *name, int priority)
   list_init (&t->opend_file_list);
   list_init (&t->exit_status_list);
   sema_init (&t->waiting, 1);
+  sema_init (&t->exec_sema, 1);
 }
 
 /* Allocates a SIZE-byte frame at the top of thread T's stack and
@@ -698,6 +699,11 @@ thread_schedule_tail (struct thread *prev)
       ASSERT (prev != cur);
       palloc_free_page (prev);
     }
+}
+
+bool is_same_tid (const struct list_elem *a, void* tid)
+{
+  return list_entry(a, struct thread, child_elem) -> tid == (tid_t)tid;
 }
 
 /* Schedules a new process.  At entry, interrupts must be off and

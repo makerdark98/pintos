@@ -104,8 +104,10 @@ struct thread
     struct list_elem child_elem;
     struct list opend_file_list;
     struct list exit_status_list;
-
+    struct semaphore exec_sema;
     struct semaphore waiting;
+    bool child_load_success;
+
     char *filename;
     /*
 
@@ -170,4 +172,5 @@ struct exit_status_elem
   struct list_elem elem;
 };
 
+bool is_same_tid (const struct list_elem *a, void* tid);
 #endif /* threads/thread.h */
