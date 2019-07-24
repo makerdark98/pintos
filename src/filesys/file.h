@@ -11,12 +11,14 @@ struct opend_file
   int fd;               /*  */
   char *filename;
   struct file *fp;
+  off_t offset;
   struct list_elem elem; /* It is used in syscall.c and thread */
 };
 
 
-struct opend_file *opend_file_alloc (const char *filename, int fd);
-void opend_file_free (struct opend_file *opend);
+struct opend_file *
+opend_file_alloc (struct list *, const char *filename, int fd);
+void opend_file_free (struct list *, struct opend_file *opend);
 struct file *opend_file_get_file (struct opend_file *);
 
 /* Opening and closing files. */

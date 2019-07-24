@@ -185,23 +185,8 @@ tid_t syscall_exec(const char *filename)
   CHECK_PTR_VALIDITY(filename);
   
   tid_t tid;
-  int i;
-  char *tmp_filename;
 
-  for (i = 0; filename[i] != '\0' && filename[i] !=' '; i++);
-
-  tmp_filename = (char*)malloc((i+1) * sizeof(char));
-  memcpy(tmp_filename, filename, i+1);
-  tmp_filename[i] = '\0';
-
-  if (!file_exists(tmp_filename)) 
-    tid = -1;
-  else 
-  {
-    tid = process_execute (filename);
-  }
-
-  free(tmp_filename);
+  tid = process_execute (filename);
 
   return tid;
 }
@@ -246,8 +231,7 @@ int syscall_open (const char *filename)
   t = thread_current ();
   opend_file_list = thread_get_opend_file_list (t);
 
-  opend = opend_file_alloc(filename, allocate_fd());
-  list_push_back (opend_file_list, &opend->elem);
+  opend = opend_file_alloc (opend_file_list, filename, allocate_fd());
 
   return opend->fd;
 }
@@ -300,7 +284,9 @@ int syscall_read (int fd, void *buffer, unsigned size)
 
     of = list_entry(e, struct opend_file, elem);
     lock_acquire(&file_lock);
+    file_seek(opend_file_get_file(of), of->offset);
     retval = file_read(opend_file_get_file(of), buffer, size);
+    of->offset = file_tell (opend_file_get_file(of));
     lock_release(&file_lock);
   }
 
@@ -349,7 +335,9 @@ int syscall_write (int fd, const void *buffer, unsigned size)
     }
 
     lock_acquire(&file_lock);
+    file_seek(opend_file_get_file(of), of->offset);
     retval = file_write (opend_file_get_file(of), buffer, size);
+    of->offset = file_tell (opend_file_get_file(of));
     lock_release(&file_lock);
   }
   return retval;
@@ -369,6 +357,7 @@ static void syscall_seek (int fd, unsigned position)
   lock_acquire (&file_lock);
   file_seek (opend_file_get_file (of), position);
   lock_release (&file_lock);
+  of->offset = position;
 
 }
 static unsigned syscall_tell (int fd)
@@ -383,7 +372,7 @@ static unsigned syscall_tell (int fd)
   if (e == list_end(opend_file_list)) SYSCALL_EXIT;
   of = list_entry(e, struct opend_file, elem);
 
-  return file_tell (opend_file_get_file (of));
+  return of->offset;
 }
 static void syscall_close (int fd)
 {
@@ -398,7 +387,7 @@ static void syscall_close (int fd)
   of = list_entry(e, struct opend_file, elem);
   list_remove(e);
 
-  opend_file_free (of);
+  opend_file_free (opend_file_list, of);
 }
 static mapid_t syscall_mmap (int fd UNUSED, void *addr UNUSED)
 {

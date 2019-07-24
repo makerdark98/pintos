@@ -590,7 +590,7 @@ thread_destroy_opend_file_list (struct thread *target)
   {
     of = list_entry (e, struct opend_file, elem);
     e = list_remove (e);
-    opend_file_free (of);
+    opend_file_free (opend_file_list, of);
   }
 
   return true;
