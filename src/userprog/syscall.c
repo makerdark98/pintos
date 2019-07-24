@@ -257,7 +257,6 @@ int syscall_filesize (int fd)
 {
   int retval = 0;
   struct list *opend_file_list;
-  struct file *file;
   struct opend_file *of;
   struct list_elem *e;
 
@@ -268,9 +267,7 @@ int syscall_filesize (int fd)
   of = list_entry(e, struct opend_file, elem);
 
   lock_acquire(&file_lock);
-  file = filesys_open(of->filename);
-  retval = file_length(file);
-  file_close(file);
+  retval = file_length (opend_file_get_file(of));
   lock_release(&file_lock);
 
   return retval;
@@ -284,7 +281,6 @@ int syscall_read (int fd, void *buffer, unsigned size)
   struct list *opend_file_list;
   struct opend_file *of;
   struct list_elem *e;
-  struct file *file;
 
   if (fd == STDIN_FILENO) /* Standard Input */
   {
@@ -304,11 +300,7 @@ int syscall_read (int fd, void *buffer, unsigned size)
 
     of = list_entry(e, struct opend_file, elem);
     lock_acquire(&file_lock);
-    file = filesys_open(of->filename);
-    file_seek(file, of->offset);
-    retval = file_read(file, buffer, size);
-    of->offset = file_tell(file);
-    file_close(file);
+    retval = file_read(opend_file_get_file(of), buffer, size);
     lock_release(&file_lock);
   }
 
@@ -324,7 +316,6 @@ int syscall_write (int fd, const void *buffer, unsigned size)
   struct opend_file *of;
   struct list_elem *e, *child;
   struct thread *t;
-  struct file *file;
 
   if (fd == STDOUT_FILENO)
   {
@@ -358,13 +349,7 @@ int syscall_write (int fd, const void *buffer, unsigned size)
     }
 
     lock_acquire(&file_lock);
-    file = filesys_open(of->filename);
-    file_seek(file, of->offset);
-
-    retval = file_write (file, buffer, size);
-
-    of->offset = file_tell(file);
-    file_close(file);
+    retval = file_write (opend_file_get_file(of), buffer, size);
     lock_release(&file_lock);
   }
   return retval;
@@ -382,7 +367,7 @@ static void syscall_seek (int fd, unsigned position)
 
   of = list_entry (e, struct opend_file, elem);
   lock_acquire (&file_lock);
-  of->offset = position;
+  file_seek (opend_file_get_file (of), position);
   lock_release (&file_lock);
 
 }
@@ -398,7 +383,7 @@ static unsigned syscall_tell (int fd)
   if (e == list_end(opend_file_list)) SYSCALL_EXIT;
   of = list_entry(e, struct opend_file, elem);
 
-  return of->offset;
+  return file_tell (opend_file_get_file (of));
 }
 static void syscall_close (int fd)
 {

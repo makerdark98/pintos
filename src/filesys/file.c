@@ -16,14 +16,19 @@ opend_file_alloc (const char *filename, int fd)
   retval->filename = (char *) malloc (filename_size * sizeof (char));
   memcpy (retval->filename, filename, filename_size);
   retval->fd = fd;
-  retval->offset = 0;
+  retval->fp = filesys_open (filename);
 
   return retval;
 }
 void opend_file_free (struct opend_file *opend)
 {
+  file_close (opend_file_get_file (opend));
   free (opend->filename);
   free (opend);
+}
+struct file *opend_file_get_file (struct opend_file *of)
+{
+  return of->fp;
 }
 /* An open file. */
 struct file 
