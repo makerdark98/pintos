@@ -134,9 +134,15 @@ void thread_tick (void);
 void thread_update_recent_cpu (struct thread *, void *);
 void thread_update_priority (struct thread *,void *);
 void thread_print_stats (void);
-struct thread* thread_get_thread_from_tid(tid_t tid);
-bool thread_is_parent(struct thread* parent, struct thread* child);
+struct thread* thread_get_thread_from_tid (tid_t);
+
+bool thread_is_parent(struct thread *, struct thread*);
+bool thread_has_parent(struct thread *);
+struct thread* thread_get_parent(struct thread *);
+bool thread_remove_child(struct thread *, struct thread *);
+
 struct list* thread_get_opend_file_list(struct thread*);
+bool thread_destroy_opend_file_list (struct thread *target);
 
 typedef void thread_func (void *aux);
 tid_t thread_create (const char *name, int priority, thread_func *, void *);
@@ -158,7 +164,7 @@ void thread_foreach (thread_action_func *, void *);
 int thread_get_priority (void);
 int thread_get_priority_from_thread (struct thread *);
 void thread_set_priority (int);
-bool thread_less (const struct list_elem *_a, const struct list_elem *_b, void* aux);
+bool thread_less (const struct list_elem *, const struct list_elem *, void *);
 
 int thread_get_nice (void);
 void thread_set_nice (int);
@@ -167,10 +173,14 @@ int thread_get_load_avg (void);
 
 struct exit_status_elem
 {
-  int exit_status;
+  int status; 
   tid_t tid;
   struct list_elem elem;
 };
+
+bool thread_spread_exit_status (struct thread *, tid_t, int); 
+bool thread_destroy_exit_status_list (struct thread *); 
+bool is_same_tid_exit_status (const struct list_elem *, void *);
 
 bool is_same_tid (const struct list_elem *a, void* tid);
 #endif /* threads/thread.h */

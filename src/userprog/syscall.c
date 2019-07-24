@@ -16,8 +16,9 @@
 typedef int mapid_t;
 #define READDIR_MAX_LEN 14
 struct lock fd_lock;
-#define SYSCALL_EXIT syscall_exit(-1);
-//#define SYSCALL_EXIT ASSERT(1 != 1)
+
+#define SYSCALL_EXIT syscall_exit(-1)
+
 #define CHECK_PTR_VALIDITY(ptr) {                   \
   if (!( (void*)ptr > (void*)0x08048000             \
         && (void*)ptr < PHYS_BASE)                  \
@@ -25,31 +26,32 @@ struct lock fd_lock;
             thread_current ()->pagedir, ptr)))      \
     SYSCALL_EXIT;}                               
     
-bool is_same_fd (const struct list_elem *a, void* fd);
-bool is_same_process_filename (const struct list_elem *a, void* filename);
-bool is_same_tid (const struct list_elem *a, void* tid);
 static void syscall_handler (struct intr_frame *);
-static void syscall_halt(void);
-static void syscall_exit(int status);
-static tid_t syscall_exec(const char *filename);
-static int syscall_wait (tid_t tid);
-static bool syscall_create (const char *file, unsigned initial_size);
-static bool syscall_remove (const char *file);
-static int syscall_open (const char *file);
-static int syscall_filesize (int fd);
-static int syscall_read (int fd, void *buffer, unsigned size);
-static int syscall_write (int fd, const void *buffer, unsigned size);
-static void syscall_seek (int fd, unsigned position);
-static unsigned syscall_tell (int fd);
-static void syscall_close (int fd);
-static mapid_t syscall_mmap (int fd, void *addr);
-static void syscall_munmap (mapid_t mapid);
-static bool syscall_chdir (const char *dir);
-static bool syscall_mkdir (const char *dir);
-static bool syscall_readdir (int fd, char name[READDIR_MAX_LEN + 1]);
-static bool syscall_isdir (int fd);
-static int syscall_inumber (int fd);
+
+static void syscall_halt (void);
+static void syscall_exit (int);
+static tid_t syscall_exec (const char *);
+static int syscall_wait (tid_t);
+static bool syscall_create (const char *, unsigned);
+static bool syscall_remove (const char *);
+static int syscall_open (const char *);
+static int syscall_filesize (int);
+static int syscall_read (int, void *, unsigned);
+static int syscall_write (int, const void *, unsigned);
+static void syscall_seek (int, unsigned);
+static unsigned syscall_tell (int );
+static void syscall_close (int);
+static mapid_t syscall_mmap (int, void *);
+static void syscall_munmap (mapid_t);
+static bool syscall_chdir (const char *);
+static bool syscall_mkdir (const char *);
+static bool syscall_readdir (int, char [READDIR_MAX_LEN + 1]);
+static bool syscall_isdir (int);
+static int syscall_inumber (int);
 static int allocate_fd (void);
+
+static bool is_same_fd (const struct list_elem *, void *);
+static bool is_same_process_filename (const struct list_elem *, void *);
 
 void
 syscall_init (void) 
@@ -63,12 +65,9 @@ static void
 syscall_handler (struct intr_frame *f) 
 {
   int* NUMBER;
-  void *arg0, *arg1, *arg2;
   NUMBER = (int*)(f->esp);
-  arg0 = f->esp + sizeof(void*) * 5;
-  arg1 = f->esp + sizeof(void*) * 6;
-  arg2 = f->esp + sizeof(void*) * 7;
   CHECK_PTR_VALIDITY(f->esp);
+
   switch (*NUMBER)
   {
     /* Project 2 */
@@ -86,7 +85,9 @@ syscall_handler (struct intr_frame *f)
       f->eax = syscall_wait(*(int*)(f->esp + 4)); 
       break;
     case SYS_CREATE:
-      f->eax = syscall_create(*(const char**)(f->esp + 16), *(unsigned*)(f->esp + 20)); 
+      f->eax = syscall_create (*(const char**)(f->esp + 16),
+          *(unsigned*)(f->esp + 20)
+          ); 
       break;
     case SYS_REMOVE:
       f->eax = syscall_remove(*(const char**)(f->esp + 16)); 
@@ -98,17 +99,20 @@ syscall_handler (struct intr_frame *f)
       f->eax = syscall_filesize(*(int*)(f->esp + 4));
       break;
     case SYS_READ:
-      f->eax = syscall_read(*(int*)arg0, *(void**)arg1, *(unsigned *)arg2);
+      f->eax = syscall_read(*(int*)(f->esp + 20), 
+          *(void**)(f->esp + 24), 
+          *(unsigned *)(f->esp + 28));
       break;
     case SYS_WRITE:
-      f->eax = 
-        syscall_write(*(int*)(arg0), *(void**)arg1, *(unsigned *)(arg2));
+      f->eax = syscall_write(*(int*)(f->esp + 20),
+          *(void**)(f->esp + 24),
+          *(unsigned *)(f->esp + 28));
       break;
     case SYS_SEEK:
       syscall_seek(*(int*)(f->esp + 16), *(unsigned*)(f->esp + 20));
       break;
     case SYS_TELL:
-      syscall_tell(*(int*)arg0);
+      syscall_tell(*(int*)(f->esp + 20));
       break;
     case SYS_CLOSE:
       syscall_close(*(int*)(f->esp + 4));
@@ -120,22 +124,22 @@ syscall_handler (struct intr_frame *f)
       f->eax = (int)syscall_mmap(*(int*)(f->esp + 4), *(char**)(f->esp + 8));
       break;
     case SYS_MUNMAP:
-      syscall_munmap(*(mapid_t*)arg0);
+      syscall_munmap(*(mapid_t*)(f->esp + 4));
       break;
     case SYS_CHDIR:
-      f->eax = syscall_chdir(*(const char**)arg0);
+      f->eax = syscall_chdir(*(const char**)(f->esp + 4));
       break;
     case SYS_MKDIR:
-      f->eax = syscall_mkdir(*(const char**)arg0);
+      f->eax = syscall_mkdir(*(const char**)(f->esp + 4));
       break;
     case SYS_READDIR:
-      f->eax = (int)syscall_readdir(*(int*)arg0, *(char**)arg1);
+      f->eax = (int)syscall_readdir(*(int*)(f->esp + 4), *(char**)(f->esp +8));
       break;
     case SYS_ISDIR:
-      f->eax = syscall_isdir(*(int*)arg0);
+      f->eax = syscall_isdir(*(int*)(f->esp + 4));
       break;
     case SYS_INUMBER:
-      f->eax = syscall_inumber(*(int*)arg0);
+      f->eax = syscall_inumber(*(int*)(f->esp + 4));
       break;
     default:
       SYSCALL_EXIT;
@@ -153,40 +157,22 @@ static
 void syscall_exit(int status)
 {
   struct thread *current = thread_current();
-  struct exit_status_elem* e;
-  struct list_elem *e1;
-  struct list *opend_file_list;
+  struct thread *parent;
+  bool success;
 
-
-  if (current->parent != NULL)
+  if (thread_has_parent (current))
   {
-    e = malloc(sizeof(struct exit_status_elem));
-    e->exit_status = status;
-    e->tid = current->tid;
-    list_push_back(&current->parent->exit_status_list, &e->elem);
+    parent = thread_get_parent (current);
+    success = thread_spread_exit_status (parent, current->tid, status);
+    if (!success) SYSCALL_EXIT;
 
-    e1 = list_search (&current->parent->children, is_same_tid, (void *)e->tid);
-    list_remove (e1);
+    success = thread_remove_child (parent, current);
+    if (!success) SYSCALL_EXIT;
   }
 
-  e1 = list_begin(&current->exit_status_list);
-  while (e1 != list_end (&current->exit_status_list))
-  {
-    struct exit_status_elem *exit_status = list_entry(e1, struct exit_status_elem, elem);
-    e1 = list_remove (e1);
-    free (exit_status);
-  }
+  thread_destroy_exit_status_list (current);
 
-  opend_file_list = thread_get_opend_file_list (current);
-  for (e1 = list_begin (opend_file_list);
-      e1 != list_end (opend_file_list);
-
-      )
-  {
-    struct opend_file *of = list_entry(e1, struct opend_file, elem);
-    e1 = list_remove (e1);
-    opend_file_free (of);
-  }
+  thread_destroy_opend_file_list (current);
 
   printf("%s: exit(%d)\n", current->filename, status);
   thread_exit();
@@ -358,7 +344,9 @@ int syscall_write (int fd, const void *buffer, unsigned size)
     of = list_entry(e, struct opend_file, elem);
     if (strcmp (of->filename, t->filename) == 0) return 0;
 
-    child = list_search (&t->children, is_same_process_filename, (void *)of->filename);
+    child = list_search (&t->children,
+        is_same_process_filename,
+        (void *)of->filename);
     if (child != list_end (&t->children)) {
        return 0;
     }
@@ -473,5 +461,7 @@ bool is_same_fd (const struct list_elem *a, void* fd)
 
 bool is_same_process_filename (const struct list_elem *a, void* filename)
 {
-  return strcmp (list_entry(a, struct thread, child_elem) -> filename, (char *)filename) == 0;
+  return strcmp (
+      list_entry(a, struct thread, child_elem)->filename, (char *)filename
+      ) == 0;
 }

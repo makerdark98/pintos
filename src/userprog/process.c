@@ -31,10 +31,10 @@ tid_t
 process_execute (const char *file_name) 
 {
   char *fn_copy;
-  struct thread *t, *cur;
+  struct thread *t, *current;
   tid_t tid;
 
-  cur = thread_current();
+  current = thread_current();
   /* Make a copy of FILE_NAME.
      Otherwise there's a race between the caller and load(). */
   fn_copy = palloc_get_page (0);
@@ -42,42 +42,27 @@ process_execute (const char *file_name)
     return TID_ERROR;
   strlcpy (fn_copy, file_name, PGSIZE);
 
-  sema_down(&cur->exec_sema);
+  sema_down(&current->exec_sema);
   /* Create a new thread to execute FILE_NAME. */
   tid = thread_create (file_name, PRI_DEFAULT, start_process, fn_copy);
   if (tid == TID_ERROR)
     palloc_free_page (fn_copy); 
 
   /* Configure Parent Thread, Children. */
-  t = thread_get_thread_from_tid(tid);
-  if (t != NULL)
+  else
   {
-    t->parent = thread_current();
-    list_push_back (&t->parent->children, &t->child_elem);
-  }
-  sema_down(&cur->exec_sema);
-  sema_up(&cur->exec_sema);
+    t = thread_get_thread_from_tid (tid);
+    ASSERT (t != NULL);
 
-  if (!cur->child_load_success){
-    tid = -1;
-  }
+    t->parent = current;
+    list_push_back (&current->children, &t->child_elem);
 
-  /* 
-  struct list_elem *e1, *e2;
-  e1 = list_search (&cur->children, is_same_tid, (void *)tid);
-  if (e1 == list_end(&cur->children)) {
-    for (e2 = list_begin (&cur->exit_status_list);
-        e2 != list_end (&cur->exit_status_list);
-        e2 = list_next(e2))
-    {
-      if (list_entry(e2, struct exit_status_elem, elem)->tid == tid)
-        break;
-    }
-    if (e2 == list_end (&cur->exit_status_list)) {
-      tid = -1;
-    }
+    sema_down(&current->exec_sema);
+    sema_up(&current->exec_sema);
+
+    if (!current->child_load_success)
+      tid = TID_ERROR;
   }
-  */
 
   return tid;
 }
@@ -89,48 +74,42 @@ start_process (void *file_name_)
 {
   char* file_name;
   struct intr_frame if_;
-  bool success;
-  char *save_ptr, *tmp;
-  unsigned tmp_size;
+  char *save_ptr;
+  unsigned buffer_size;
+  struct thread *current, *parent;
   file_name = strtok_r(file_name_, " ", &save_ptr);
 
+  current = thread_current ();
+  parent = thread_get_parent (current);
   /* Initialize interrupt frame and load executable. */
   memset (&if_, 0, sizeof if_);
   if_.gs = if_.fs = if_.es = if_.ds = if_.ss = SEL_UDSEG;
   if_.cs = SEL_UCSEG;
   if_.eflags = FLAG_IF | FLAG_MBS;
 
-  success = load (file_name, &if_.eip, &if_.esp);
+  parent->child_load_success = load (file_name, &if_.eip, &if_.esp);
 
-  if (success) 
+  if (parent->child_load_success) 
   { 
-    tmp_size = strlen(file_name) + 1;
-    tmp = malloc(tmp_size * sizeof(char));
-    memcpy(tmp, file_name, tmp_size);
-    thread_current() -> filename = tmp;
+    buffer_size = strlen (file_name) + 1;
+    current->filename = malloc (buffer_size * sizeof(char));
+    memcpy (current->filename, file_name, buffer_size);
 
-    push_parse_arguments(&if_.esp, file_name, save_ptr);
+    push_parse_arguments (&if_.esp, file_name, save_ptr);
   }
   
   /* If load failed, quit. */
   palloc_free_page (file_name);
-  struct thread *current= thread_current();
-  if (!success) 
-  {
-    current->parent->child_load_success = false;
-    if (current->parent != NULL)
-    {
-      struct list_elem *e1;
-      e1 = list_search (&current->parent->children, is_same_tid, (void *)current->tid);
-      list_remove (e1);
-    }
 
-    sema_up (&thread_current() -> parent ->exec_sema);
+
+  if (!parent->child_load_success) 
+  {
+    list_remove (&current->child_elem);
+    sema_up (&parent->exec_sema);
 
     thread_exit ();
   }
-  current->parent->child_load_success = true;
-  sema_up (&thread_current() -> parent ->exec_sema);
+  sema_up (&parent->exec_sema);
 
   /* Start the user process by simulating a return from an
      interrupt, implemented by intr_exit (in
@@ -154,32 +133,28 @@ start_process (void *file_name_)
 int
 process_wait (tid_t child_tid) 
 {
-  struct thread *t, *cur;
+  struct thread *target, *current;
   struct list_elem *e;
+  struct exit_status_elem *exit_status;
   int retval;
 
+  target = thread_get_thread_from_tid(child_tid);
+  current = thread_current();
+
+  if (target != NULL && thread_is_parent(current, target))
+    sema_down(&target->waiting);
+
+  e = list_search (&current->exit_status_list,
+      is_same_tid_exit_status,
+      (void *)child_tid);
+
   retval = -1;
-
-  t = thread_get_thread_from_tid(child_tid);
-  cur = thread_current();
-
-  if (t != NULL && thread_is_parent(cur, t)) {
-    sema_down(&t->waiting);
-  }
-
-  for (e = list_begin(&cur->exit_status_list);
-      e != list_end(&cur->exit_status_list);
-      e = list_next(e))
+  if (e != list_end (&current->exit_status_list))
   {
-    if (list_entry(e, struct exit_status_elem, elem)->tid == child_tid)
-    {
-      retval = list_entry(e, struct exit_status_elem, elem)->exit_status;
-
-      list_remove(e);
-      free(list_entry(e, struct exit_status_elem, elem));
-
-      break;
-    }
+    exit_status = list_entry (e, struct exit_status_elem, elem);
+    retval = exit_status->status;
+    list_remove (e);
+    free (exit_status);
   }
   
   return retval;

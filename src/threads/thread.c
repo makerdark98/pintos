@@ -13,6 +13,7 @@
 #include "threads/vaddr.h"
 #include "devices/timer.h"
 #include "threads/malloc.h"
+#include "filesys/file.h"
 #ifdef USERPROG
 #include "userprog/process.h"
 #endif
@@ -221,6 +222,29 @@ thread_is_parent(struct thread *parent, struct thread *child)
   }
   return false;
 }
+bool 
+thread_has_parent(struct thread* t)
+{
+  ASSERT (is_thread(t));
+  return t->parent != NULL;
+}
+
+struct thread*
+thread_get_parent(struct thread *t)
+{
+  ASSERT (is_thread(t));
+  ASSERT (thread_has_parent(t));
+  return t->parent;
+}
+
+bool 
+thread_remove_child(struct thread *parent, struct thread *child)
+{
+  ASSERT (thread_is_parent(parent, child));
+
+  list_remove (&child->child_elem);
+  return true;
+}
 
 struct list*
 thread_get_opend_file_list(struct thread *t)
@@ -386,16 +410,16 @@ thread_exit (void)
   /* Remove thread from all threads list, set our status to dying,
      and schedule another process.  That process will destroy us
      when it calls thread_schedule_tail(). */
-  struct thread* t = thread_current();
-  if (t->filename != NULL) 
+  struct thread* current = thread_current();
+  if (current->filename != NULL) 
   {
-    free(t->filename);
-    t->filename = NULL;
+    free(current->filename);
+    current->filename = NULL;
   }
   intr_disable ();
-  list_remove (&t->allelem);
-  sema_up(&t->waiting);
-  t->status = THREAD_DYING;
+  list_remove (&current->allelem);
+  sema_up (&current->waiting);
+  current->status = THREAD_DYING;
 
 
   schedule ();
@@ -515,6 +539,61 @@ int
 thread_get_recent_cpu (void) 
 {
   return fxpt_to_int_round(fxpt_mul_int(thread_current()->recent_cpu, 100));
+}
+
+bool
+thread_spread_exit_status (struct thread *target, tid_t exit_tid, int status)
+{
+  struct exit_status_elem *e;
+
+  e = malloc (sizeof(struct exit_status_elem));
+  e->status = status;
+  e->tid = exit_tid;
+
+  list_push_back (&target->exit_status_list, &e->elem);
+
+  return true;
+}
+
+bool
+thread_destroy_exit_status_list (struct thread *target)
+{
+  struct list_elem *e;
+  struct exit_status_elem *data;
+  
+  e = list_begin (&target->exit_status_list);
+  while (e != list_end (&target->exit_status_list))
+  {
+    data = list_entry (e, struct exit_status_elem, elem);
+    e = list_remove (e);
+    free (data);
+  }
+
+  return true;
+}
+
+bool is_same_tid_exit_status (const struct list_elem *e, void *tid)
+{
+  return list_entry (e, struct exit_status_elem, elem)->tid == (int)tid;
+}
+
+bool
+thread_destroy_opend_file_list (struct thread *target)
+{
+  struct list_elem *e;
+  struct opend_file *of;
+  struct list *opend_file_list;
+
+  opend_file_list = thread_get_opend_file_list (target);
+  e = list_begin (opend_file_list);
+  while (e != list_end (opend_file_list))
+  {
+    of = list_entry (e, struct opend_file, elem);
+    e = list_remove (e);
+    opend_file_free (of);
+  }
+
+  return true;
 }
 
 /* Idle thread.  Executes when no other thread is ready to run.
