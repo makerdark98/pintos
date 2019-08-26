@@ -5,52 +5,7 @@
 #include "filesys/inode.h"
 #include "threads/malloc.h"
 
-struct opend_file *
-opend_file_alloc (struct list *list, const char *filename, int fd)
-{
-  struct opend_file * retval;
-  size_t filename_size;
-  struct list_elem *e;
 
-
-  filename_size = strlen (filename) + 1;
-  retval = (struct opend_file*) malloc (sizeof(struct opend_file));
-
-  retval->fd = fd;
-  retval->offset = 0;
-
-  e = list_search (list, is_same_filename, (void *)filename);
-  if (e != list_end (list)) 
-  {
-    retval->filename = list_entry (e, struct opend_file, elem)->filename;
-    retval->fp = list_entry (e, struct opend_file, elem)->fp;
-  }
-  else
-  {
-    retval->filename = (char *) malloc (filename_size * sizeof (char));
-    memcpy (retval->filename, filename, filename_size);
-    retval->fp = filesys_open (filename);
-  }
-
-  list_push_back (list, &retval->elem);
-
-  return retval;
-}
-void opend_file_free (struct list *list, struct opend_file *opend)
-{
-  struct list_elem *e;
-  e = list_search (list, is_same_filename, (void *)opend->filename);
-  if (e == list_end (list)) 
-  {
-    file_close (opend_file_get_file (opend));
-    free (opend->filename);
-  }
-  free (opend);
-}
-struct file *opend_file_get_file (struct opend_file *of)
-{
-  return of->fp;
-}
 /* An open file. */
 struct file 
   {
@@ -215,7 +170,3 @@ file_tell (struct file *file)
   return file->pos;
 }
 
-bool is_same_filename (const struct list_elem *a, void* filename)
-{
-  return strcmp (list_entry(a, struct opend_file, elem) -> filename, (char *)filename) == 0;
-}

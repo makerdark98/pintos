@@ -14,6 +14,9 @@
 #include "devices/timer.h"
 #include "threads/malloc.h"
 #include "filesys/file.h"
+#include "filesys/opened_file.h"
+#include "vm/frame.h"
+
 #ifdef USERPROG
 #include "userprog/process.h"
 #endif
@@ -97,6 +100,8 @@ thread_init (void)
   lock_init (&tid_lock);
   list_init (&ready_list);
   list_init (&all_list);
+
+  frame_table_init ();
 
   /* Set up a thread structure for the running thread. */
   initial_thread = running_thread ();
@@ -244,18 +249,6 @@ thread_remove_child(struct thread *parent, struct thread *child)
 
   list_remove (&child->child_elem);
   return true;
-}
-
-struct list*
-thread_get_opend_file_list(struct thread *t)
-{
-  struct thread *ancestor;
-  ancestor = t;
-  /* 
-  while (ancestor->parent != NULL)
-    ancestor = ancestor->parent;
-    */
-  return &ancestor->opend_file_list;
 }
 
 /* Creates a new kernel thread named NAME with the given initial
@@ -577,24 +570,6 @@ bool is_same_tid_exit_status (const struct list_elem *e, void *tid)
   return list_entry (e, struct exit_status_elem, elem)->tid == (int)tid;
 }
 
-bool
-thread_destroy_opend_file_list (struct thread *target)
-{
-  struct list_elem *e;
-  struct opend_file *of;
-  struct list *opend_file_list;
-
-  opend_file_list = thread_get_opend_file_list (target);
-  e = list_begin (opend_file_list);
-  while (e != list_end (opend_file_list))
-  {
-    of = list_entry (e, struct opend_file, elem);
-    e = list_remove (e);
-    opend_file_free (opend_file_list, of);
-  }
-
-  return true;
-}
 
 /* Idle thread.  Executes when no other thread is ready to run.
 
@@ -696,10 +671,12 @@ init_thread (struct thread *t, const char *name, int priority)
   list_push_back (&all_list, &t->allelem);
   list_init (&t->holding_locks);
   list_init (&t->children);
-  list_init (&t->opend_file_list);
+  list_init (&t->opened_file_list);
+  list_init (&t->mmap_file_list);
   list_init (&t->exit_status_list);
   sema_init (&t->waiting, 1);
   sema_init (&t->exec_sema, 1);
+  t->mapid = 1;
 }
 
 /* Allocates a SIZE-byte frame at the top of thread T's stack and
@@ -783,6 +760,24 @@ thread_schedule_tail (struct thread *prev)
 bool is_same_tid (const struct list_elem *a, void* tid)
 {
   return list_entry(a, struct thread, child_elem) -> tid == (tid_t)tid;
+}
+
+struct thread*
+thread_get_thread_from_filename (const char *filename)
+{
+  struct list_elem *e;
+  
+  for (e = list_begin (&all_list);
+      e != list_end (&all_list);
+      e = list_next (e))
+  {
+    if (list_entry (e, struct thread, allelem)->filename != NULL &&
+        strcmp (list_entry (e, struct thread, allelem)->filename, filename) == 0)
+    {
+      return list_entry (e, struct thread, allelem);
+    }
+  }
+  return NULL;
 }
 
 /* Schedules a new process.  At entry, interrupts must be off and

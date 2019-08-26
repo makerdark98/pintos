@@ -5,6 +5,7 @@
 #include <list.h>
 #include <stdint.h>
 #include <fixed_point.h>
+#include <hash.h>
 #include "threads/synch.h"
 
 /* States in a thread's life cycle. */
@@ -101,20 +102,24 @@ struct thread
 
     struct thread *parent;
     struct list children;
-    struct list_elem child_elem;
-    struct list opend_file_list;
     struct list exit_status_list;
     struct semaphore exec_sema;
     struct semaphore waiting;
     bool child_load_success;
-
     char *filename;
-    /*
 
-    struct file *exec;
-    */
+    struct file *process_file;
+
+    struct list_elem child_elem;
+
+    struct list opened_file_list;
+
+    struct list mmap_file_list;
+    int mapid;
 
     struct list holding_locks;
+
+    struct hash pt;
 
     fxpt_t recent_cpu;
     int nice;
@@ -140,9 +145,6 @@ bool thread_is_parent(struct thread *, struct thread*);
 bool thread_has_parent(struct thread *);
 struct thread* thread_get_parent(struct thread *);
 bool thread_remove_child(struct thread *, struct thread *);
-
-struct list* thread_get_opend_file_list(struct thread*);
-bool thread_destroy_opend_file_list (struct thread *target);
 
 typedef void thread_func (void *aux);
 tid_t thread_create (const char *name, int priority, thread_func *, void *);
@@ -183,4 +185,6 @@ bool thread_destroy_exit_status_list (struct thread *);
 bool is_same_tid_exit_status (const struct list_elem *, void *);
 
 bool is_same_tid (const struct list_elem *a, void* tid);
+
+struct thread* thread_get_thread_from_filename (const char *);
 #endif /* threads/thread.h */

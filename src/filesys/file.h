@@ -3,24 +3,11 @@
 
 #include "filesys/off_t.h"
 #include "lib/kernel/list.h"
+#include "threads/synch.h"
 
 struct inode;
 
-struct opend_file
-{
-  int fd;               /*  */
-  char *filename;
-  struct file *fp;
-  off_t offset;
-  struct list_elem elem; /* It is used in syscall.c and thread */
-};
-
-
-struct opend_file *
-opend_file_alloc (struct list *, const char *filename, int fd);
-void opend_file_free (struct list *, struct opend_file *opend);
-struct file *opend_file_get_file (struct opend_file *);
-
+struct lock file_lock;
 /* Opening and closing files. */
 struct file *file_open (struct inode *);
 struct file *file_reopen (struct file *);
@@ -42,5 +29,4 @@ void file_seek (struct file *, off_t);
 off_t file_tell (struct file *);
 off_t file_length (struct file *);
 
-bool is_same_filename (const struct list_elem *a, void* filename);
 #endif /* filesys/file.h */

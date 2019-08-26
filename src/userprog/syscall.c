@@ -9,27 +9,22 @@
 #include "threads/vaddr.h"
 #include "threads/malloc.h"
 #include "filesys/file.h"
+#include "filesys/opened_file.h"
 #include "filesys/filesys.h"
 #include "userprog/pagedir.h"
 #include "userprog/process.h"
+#include "vm/page.h"
 
-typedef int mapid_t;
 #define READDIR_MAX_LEN 14
-struct lock fd_lock;
 
-#define SYSCALL_EXIT syscall_exit(-1)
+static bool is_valid_ptr (void *, const void *);
+static bool is_valid_string (void *, const void *);
+static bool is_valid_buffer (void *, const void *, off_t, bool);
 
-#define CHECK_PTR_VALIDITY(ptr) {                   \
-  if (!( (void*)ptr > (void*)0x08048000             \
-        && (void*)ptr < PHYS_BASE)                  \
-        || (!pagedir_get_page (                     \
-            thread_current ()->pagedir, ptr)))      \
-    SYSCALL_EXIT;}                               
-    
 static void syscall_handler (struct intr_frame *);
 
 static void syscall_halt (void);
-static void syscall_exit (int);
+void syscall_exit (int);
 static tid_t syscall_exec (const char *);
 static int syscall_wait (tid_t);
 static bool syscall_create (const char *, unsigned);
@@ -41,32 +36,31 @@ static int syscall_write (int, const void *, unsigned);
 static void syscall_seek (int, unsigned);
 static unsigned syscall_tell (int );
 static void syscall_close (int);
-static mapid_t syscall_mmap (int, void *);
-static void syscall_munmap (mapid_t);
+static int syscall_mmap (int, void *);
+static void syscall_munmap (int);
 static bool syscall_chdir (const char *);
 static bool syscall_mkdir (const char *);
 static bool syscall_readdir (int, char [READDIR_MAX_LEN + 1]);
 static bool syscall_isdir (int);
 static int syscall_inumber (int);
-static int allocate_fd (void);
 
-static bool is_same_fd (const struct list_elem *, void *);
 static bool is_same_process_filename (const struct list_elem *, void *);
 
 void
 syscall_init (void) 
 {
   intr_register_int (0x30, 3, INTR_ON, syscall_handler, "syscall");
-  lock_init(&file_lock);
-  lock_init(&fd_lock);
+  lock_init (&file_lock);
+  lock_init (&fd_lock);
+  lock_init (&md_lock);
 }
 
 static void
 syscall_handler (struct intr_frame *f) 
 {
+  is_valid_ptr (f->esp, f->esp);
   int* NUMBER;
   NUMBER = (int*)(f->esp);
-  CHECK_PTR_VALIDITY(f->esp);
 
   switch (*NUMBER)
   {
@@ -75,36 +69,45 @@ syscall_handler (struct intr_frame *f)
       syscall_halt(); 
       break;
     case SYS_EXIT:
-      CHECK_PTR_VALIDITY(f->esp + 4);
+      is_valid_ptr (f->esp + 4, f->esp);
       syscall_exit(*(int*)(f->esp + 4)); 
       break;
     case SYS_EXEC:
-      f->eax = syscall_exec(*(const char**)(f->esp + 4)); 
+      is_valid_string (*(char**)(f->esp + 4), f->esp);
+      f->eax = syscall_exec (*(const char**)(f->esp + 4)); 
       break;
     case SYS_WAIT:
-      f->eax = syscall_wait(*(int*)(f->esp + 4)); 
+      f->eax = syscall_wait (*(int*)(f->esp + 4)); 
       break;
     case SYS_CREATE:
+      is_valid_ptr (*(char**)(f->esp + 16), f->esp);
       f->eax = syscall_create (*(const char**)(f->esp + 16),
           *(unsigned*)(f->esp + 20)
           ); 
       break;
     case SYS_REMOVE:
-      f->eax = syscall_remove(*(const char**)(f->esp + 16)); 
+      is_valid_string (*(char**)(f->esp + 12), f->esp);
+      f->eax = syscall_remove (*(const char**)(f->esp + 12)); 
       break;
     case SYS_OPEN:
-      f->eax = syscall_open(*(const char**)(f->esp + 4));
+      is_valid_string (*(char**)(f->esp + 4), f->esp);
+      f->eax = syscall_open (*(const char**)(f->esp + 4));
       break;
     case SYS_FILESIZE:
-      f->eax = syscall_filesize(*(int*)(f->esp + 4));
+      f->eax = syscall_filesize (*(int*)(f->esp + 4));
       break;
     case SYS_READ:
-      f->eax = syscall_read(*(int*)(f->esp + 20), 
+      is_valid_buffer (*(void **)(f->esp + 24), f->esp,
+          *(unsigned *)(f->esp + 28), true);
+
+      f->eax = syscall_read (*(int*)(f->esp + 20), 
           *(void**)(f->esp + 24), 
           *(unsigned *)(f->esp + 28));
       break;
     case SYS_WRITE:
-      f->eax = syscall_write(*(int*)(f->esp + 20),
+      is_valid_buffer (*(void **)(f->esp + 24), f->esp,
+          *(unsigned *)(f->esp + 28), false);
+      f->eax = syscall_write (*(int*)(f->esp + 20),
           *(void**)(f->esp + 24),
           *(unsigned *)(f->esp + 28));
       break;
@@ -117,14 +120,11 @@ syscall_handler (struct intr_frame *f)
     case SYS_CLOSE:
       syscall_close(*(int*)(f->esp + 4));
       break;
-    case SYS_PAGEFAULT:
-      SYSCALL_EXIT;
-      break;
     case SYS_MMAP:
-      f->eax = (int)syscall_mmap(*(int*)(f->esp + 4), *(char**)(f->esp + 8));
+      f->eax = (int)syscall_mmap(*(int*)(f->esp + 16), *(char**)(f->esp + 20));
       break;
     case SYS_MUNMAP:
-      syscall_munmap(*(mapid_t*)(f->esp + 4));
+      syscall_munmap(*(int*)(f->esp + 4));
       break;
     case SYS_CHDIR:
       f->eax = syscall_chdir(*(const char**)(f->esp + 4));
@@ -153,37 +153,35 @@ void syscall_halt (void)
   NOT_REACHED ();
 }
 
-static 
 void syscall_exit(int status)
 {
-  struct thread *current = thread_current();
-  struct thread *parent;
-  bool success;
+  struct thread *current, *parent;
 
+  current = thread_current ();
   if (thread_has_parent (current))
   {
     parent = thread_get_parent (current);
-    success = thread_spread_exit_status (parent, current->tid, status);
-    if (!success) SYSCALL_EXIT;
-
-    success = thread_remove_child (parent, current);
-    if (!success) SYSCALL_EXIT;
+    if (!thread_spread_exit_status (parent, current->tid, status))
+    {
+      status = -1;
+      goto done;
+    }
+    if (!thread_remove_child (parent, current))
+    {
+      status = -1;
+      goto done;
+    }
   }
 
-  thread_destroy_exit_status_list (current);
-
-  thread_destroy_opend_file_list (current);
-
+done:
   printf("%s: exit(%d)\n", current->filename, status);
-  thread_exit();
+  thread_exit ();
 
   NOT_REACHED ();
 }
 static 
 tid_t syscall_exec(const char *filename)
 {
-  CHECK_PTR_VALIDITY(filename);
-  
   tid_t tid;
 
   tid = process_execute (filename);
@@ -195,76 +193,59 @@ int syscall_wait (tid_t tid)
 {
   int result;
 
-  result = process_wait(tid);
+  result = process_wait (tid);
 
   return result;
 }
 static 
-bool syscall_create (const char *file, unsigned initial_size)
+bool syscall_create (const char *filename, unsigned initial_size)
 {
-  CHECK_PTR_VALIDITY(file);
-  if (strcmp(file, "") == 0) 
-    SYSCALL_EXIT;
-  return filesys_create(file, initial_size);
+  return filesys_create(filename, initial_size);
 }
+
 static 
-bool syscall_remove (const char *file)
+bool syscall_remove (const char *filename)
 {
-  if (file == NULL) return false;
-  bool retval = filesys_remove(file);
+  bool retval;
+  lock_acquire (&file_lock);
+  retval =  filesys_remove (filename);
+  lock_release (&file_lock);
+
   return retval;
 }
 
 static 
 int syscall_open (const char *filename)
 {
-  CHECK_PTR_VALIDITY (filename);
+  struct opened_file* opened;
 
-  struct opend_file* opend;
-  struct list *opend_file_list;
-  struct thread *t;
+  opened = opened_file_open (filename);
 
-  if (filename == NULL) return -1;
+  if (opened == NULL)
+    return -1;
 
-  if (!file_exists(filename)) return -1;
-
-  t = thread_current ();
-  opend_file_list = thread_get_opend_file_list (t);
-
-  opend = opend_file_alloc (opend_file_list, filename, allocate_fd());
-
-  return opend->fd;
+  return opened->fd;
 }
 
 static 
 int syscall_filesize (int fd)
 {
-  int retval = 0;
-  struct list *opend_file_list;
-  struct opend_file *of;
-  struct list_elem *e;
+  int retval;
+  struct opened_file* of;
 
-  opend_file_list = thread_get_opend_file_list(thread_current());
-  e = list_search (opend_file_list, is_same_fd, (void *)fd);
+  of = opened_file_get_from_fd (fd);
+  if (of == NULL) SYSCALL_EXIT;
 
-  if (e == list_end(opend_file_list)) return -1;
-  of = list_entry(e, struct opend_file, elem);
-
-  lock_acquire(&file_lock);
-  retval = file_length (opend_file_get_file(of));
-  lock_release(&file_lock);
+  retval = opened_file_length (of);
 
   return retval;
 }
 static 
 int syscall_read (int fd, void *buffer, unsigned size)
 {
-  CHECK_PTR_VALIDITY(buffer);
   unsigned i;
   int retval;
-  struct list *opend_file_list;
-  struct opend_file *of;
-  struct list_elem *e;
+  struct opened_file *of;
 
   if (fd == STDIN_FILENO) /* Standard Input */
   {
@@ -277,17 +258,11 @@ int syscall_read (int fd, void *buffer, unsigned size)
 
   else 
   {
-    opend_file_list = thread_get_opend_file_list(thread_current());
-    e = list_search(opend_file_list, is_same_fd, (void *)fd);
+    of = opened_file_get_from_fd (fd);
 
-    if (e == list_end(opend_file_list)) return -1;
+    if (of == NULL) return -1;
 
-    of = list_entry(e, struct opend_file, elem);
-    lock_acquire(&file_lock);
-    file_seek(opend_file_get_file(of), of->offset);
-    retval = file_read(opend_file_get_file(of), buffer, size);
-    of->offset = file_tell (opend_file_get_file(of));
-    lock_release(&file_lock);
+    retval = opened_file_read (of, buffer, size);
   }
 
   return retval;
@@ -295,107 +270,117 @@ int syscall_read (int fd, void *buffer, unsigned size)
 static 
 int syscall_write (int fd, const void *buffer, unsigned size)
 {
-  CHECK_PTR_VALIDITY(buffer);
-
   int retval;
-  struct list *opend_file_list;
-  struct opend_file *of;
-  struct list_elem *e, *child;
-  struct thread *t;
+  struct opened_file *of;
+  struct list_elem *child;
+  struct thread *current;
+
+  current = thread_current ();
 
   if (fd == STDOUT_FILENO)
   {
+  /* I don't understand Why "putbuf call" must be in critical session with file_lock 
+   * If there is any race condition issue, erase comment out code */
     lock_acquire(&file_lock);
     putbuf(buffer, size);
     lock_release(&file_lock);
     retval = size;
   }
+  else if (fd == STDIN_FILENO)
+  {SYSCALL_EXIT;}
 
   else
   {
-    t = thread_current ();
-    opend_file_list = thread_get_opend_file_list(t);
-    e = list_search(opend_file_list, is_same_fd, (void *)fd);
+    of = opened_file_get_from_fd (fd);
 
-    if (e == list_end(opend_file_list)) return -1;
-    of = list_entry(e, struct opend_file, elem);
-    if (strcmp (of->filename, t->filename) == 0) return 0;
+    if (of == NULL)
+      SYSCALL_EXIT;
 
-    child = list_search (&t->children,
-        is_same_process_filename,
-        (void *)of->filename);
-    if (child != list_end (&t->children)) {
-       return 0;
-    }
+    child = list_search (&current->children, is_same_process_filename,
+                          (void *)of->filename);
 
-    if (!file_exists(of->filename))
-    {
-      if (!filesys_create(of->filename, size))
-        return -1;
-    }
+    if (child != list_end (&current->children))
+       return -1;
 
-    lock_acquire(&file_lock);
-    file_seek(opend_file_get_file(of), of->offset);
-    retval = file_write (opend_file_get_file(of), buffer, size);
-    of->offset = file_tell (opend_file_get_file(of));
-    lock_release(&file_lock);
+    retval = opened_file_write (of, buffer, size);
   }
   return retval;
 }
 
-static void syscall_seek (int fd, unsigned position)
+static void
+syscall_seek (int fd, unsigned position)
 {
-  struct list_elem *e;
-  struct list *opend_file_list;
-  struct opend_file *of;
-  opend_file_list = thread_get_opend_file_list(thread_current());
-  e = list_search (opend_file_list, is_same_fd, (void *)fd);
+  struct opened_file *of;
 
-  if (e == list_end (opend_file_list)) SYSCALL_EXIT;
+  of = opened_file_get_from_fd (fd);
+  if (of == NULL) SYSCALL_EXIT;
 
-  of = list_entry (e, struct opend_file, elem);
-  lock_acquire (&file_lock);
-  file_seek (opend_file_get_file (of), position);
-  lock_release (&file_lock);
-  of->offset = position;
-
+  opened_file_seek (of, position);
 }
-static unsigned syscall_tell (int fd)
+
+static unsigned
+syscall_tell (int fd)
 {
-  struct list_elem *e;
-  struct list *opend_file_list;
-  struct opend_file *of;
+  struct opened_file *of;
 
-  opend_file_list = thread_get_opend_file_list(thread_current());
-  e = list_search(opend_file_list, is_same_fd, (void *)fd);
+  of = opened_file_get_from_fd (fd);
+  if (of == NULL) SYSCALL_EXIT;
 
-  if (e == list_end(opend_file_list)) SYSCALL_EXIT;
-  of = list_entry(e, struct opend_file, elem);
-
-  return of->offset;
+  return opened_file_tell (of);
 }
-static void syscall_close (int fd)
-{
-  struct list_elem *e;
-  struct list *opend_file_list;
-  struct opend_file *of;
 
-  opend_file_list = thread_get_opend_file_list(thread_current());
-  e = list_search(opend_file_list, is_same_fd, (void *)fd);
+static void
+syscall_close (int fd)
+{
+  struct opened_file *of;
+
+  of = opened_file_get_from_fd (fd);
+  if (of == NULL) SYSCALL_EXIT;
+
+  opened_file_close (of);
+}
+
+static int
+syscall_mmap (int fd, void *addr)
+{
+  int retval;
+  struct opened_file *of;
+  struct mmap_file *mf;
+  of = opened_file_get_from_fd (fd);
+
+  if (of == NULL)
+    SYSCALL_EXIT;
   
-  if (e == list_end(opend_file_list)) SYSCALL_EXIT;
-  of = list_entry(e, struct opend_file, elem);
-  list_remove(e);
+  mf = page_mmap (of, addr);
+  if (mf == NULL) return -1;
 
-  opend_file_free (opend_file_list, of);
+  retval = mf->mapid;
+
+  return retval;
 }
-static mapid_t syscall_mmap (int fd UNUSED, void *addr UNUSED)
+
+static void
+syscall_munmap (int mapid)
 {
-  return 0;
+  bool success;
+  struct list_elem *e;
+  struct mmap_file *mf;
+  struct thread *current;
+
+  current = thread_current ();
+  e = list_search (&current->mmap_file_list, is_same_md, (void*) mapid);
+
+  if (e == list_end (&current->mmap_file_list))
+    SYSCALL_EXIT;
+
+  mf = list_entry (e, struct mmap_file, elem);
+
+  success = page_unmap (mf);
+
+  if (!success)
+    SYSCALL_EXIT;
 }
-static void syscall_munmap (mapid_t mapid UNUSED)
-{
-}
+
 static bool syscall_chdir (const char *dir UNUSED)
 {
   return false;
@@ -417,20 +402,72 @@ static int syscall_inumber (int fd UNUSED)
   return 0;
 }
 
-static int
-allocate_fd (void)
-{
-  static int next_fd = 3;
-  int fd;
-  lock_acquire (&fd_lock);
-  fd = next_fd++;
-  lock_release (&fd_lock);
-  return fd;
+static bool
+is_valid_ptr (void *vaddr, const void *esp) {
+  bool load = false;
+  struct page_entry *pe;
+
+  if (!(is_user_vaddr (vaddr) && vaddr > USER_VADDR_BOTTOM))
+    goto done;
+
+  pe = page_lookup ((void *)vaddr);
+  
+  if (pe)
+  {
+    page_load (pe);
+    load = page_is_loaded (pe);
+  }
+  else if (vaddr >= esp - STACK_HEURISTIC)
+    load = grow_stack ((void *) vaddr);
+
+done:
+  if (!load) SYSCALL_EXIT;
+
+  return load;
 }
 
-bool is_same_fd (const struct list_elem *a, void* fd)
+static bool
+is_valid_string (void *buffer, const void *esp)
 {
-  return list_entry(a, struct opend_file, elem)-> fd == (int)fd;
+  char *tmp;
+  char *page_end;
+
+  tmp = buffer;
+  while (is_valid_ptr (tmp, esp))
+  {
+    page_end = pg_round_up (tmp);
+    for (tmp = buffer; tmp < page_end ; tmp ++)
+    {
+      if (*tmp == '\0')
+        return true;
+    }
+    tmp ++;
+  }
+
+  NOT_REACHED ();
+  return false;
+}
+
+static bool
+is_valid_buffer (void *buffer, const void *esp, off_t size, bool writable)
+{
+  void *tmp;
+  off_t remain_size;
+  struct page_entry *pe;
+
+  for (tmp = pg_round_down(buffer),
+      remain_size = buffer - tmp + size;
+      remain_size > 0 && is_valid_ptr (tmp, esp);
+      remain_size -= PGSIZE, tmp += PGSIZE)
+  {
+    pe = page_lookup (tmp);
+
+    if (writable && !page_is_writable (pe)) 
+    {
+      SYSCALL_EXIT;
+    }
+  }
+  return true;
 }
 
 bool is_same_process_filename (const struct list_elem *a, void* filename)
