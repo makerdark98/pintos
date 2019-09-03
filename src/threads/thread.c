@@ -71,8 +71,7 @@ static void schedule (void);
 void thread_schedule_tail (struct thread *prev);
 static tid_t allocate_tid (void);
 
-static bool thread_compare_priority (const struct list_elem *,
-    const struct list_elem *, void *);
+static int thread_get_donated_priority (const struct thread *);
 
 /* Initializes the threading system by transforming the code
    that's currently running into a thread.  This can't work in
@@ -213,7 +212,9 @@ thread_create (const char *name, int priority,
 
   /* Add to run queue. */
   thread_unblock (t);
-  thread_yield ();
+  
+  if (t->priority > thread_get_priority())
+    thread_yield ();
 
   return tid;
 }
@@ -384,7 +385,14 @@ thread_set_priority (int new_priority)
 int
 thread_get_priority (void) 
 {
-  return thread_current ()->priority;
+  int retval;
+  enum intr_level old_level;
+
+  old_level = intr_disable ();
+  retval = thread_get_donated_priority (thread_current ());
+  intr_set_level (old_level);
+
+  return retval;
 }
 
 /* Sets the current thread's nice value to NICE. */
@@ -508,6 +516,7 @@ init_thread (struct thread *t, const char *name, int priority)
   list_init (&t->children);
   latch_init (&t->ready_to_die);
   sema_init (&t->can_die, 1);
+  list_init (&t->holding_locks);
 }
 
 /* Allocates a SIZE-byte frame at the top of thread T's stack and
@@ -626,16 +635,40 @@ allocate_tid (void)
   return tid;
 }
 
-static bool
+bool
 thread_compare_priority (const struct list_elem *_a,
     const struct list_elem *_b, void *aux UNUSED)
 {
   const struct thread *a = list_entry (_a, struct thread, elem);
   const struct thread *b = list_entry (_b, struct thread, elem);
 
-  return a->priority < b->priority;
+  return thread_get_donated_priority (a) < thread_get_donated_priority (b);
 }
 
+static int thread_get_donated_priority (const struct thread *t) 
+{
+  int priority = t->priority;
+  int temp_priority;
+  struct list_elem *lock_elem, *thread_elem;
+  struct list *waiters;
+
+  for (lock_elem = list_begin (&t->holding_locks);
+      lock_elem != list_end (&t->holding_locks);
+      lock_elem = list_next (lock_elem))
+  {
+    waiters = lock_get_waiters (list_entry (lock_elem, struct lock, elem));
+    for (thread_elem = list_begin (waiters);
+        thread_elem != list_end (waiters);
+        thread_elem = list_next (thread_elem))
+    {
+      temp_priority = thread_get_donated_priority (
+          list_entry (thread_elem, struct thread, elem));
+      priority = priority > temp_priority ? priority : temp_priority;
+    }
+  }
+
+  return priority;
+}
 
 /* Offset of `stack' member within `struct thread'.
    Used by switch.S, which can't figure it out on its own. */

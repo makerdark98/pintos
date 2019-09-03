@@ -100,6 +100,8 @@ struct thread
     struct semaphore can_die;           /* Up when thread allowed to die. */
     struct list children;               /* List of child threads. */
     struct list_elem children_elem;     /* Element of `children` list. */
+    /* Priority Donation */
+    struct list holding_locks;
 
 #ifdef USERPROG
     /* Owned by userprog/process.c. */
@@ -138,6 +140,8 @@ void thread_yield (void);
 /* Performs some operation on thread t, given auxiliary data AUX. */
 typedef void thread_action_func (struct thread *t, void *aux);
 void thread_foreach (thread_action_func *, void *);
+bool thread_compare_priority (const struct list_elem *,
+    const struct list_elem *, void *);
 
 int thread_get_priority (void);
 void thread_set_priority (int);
