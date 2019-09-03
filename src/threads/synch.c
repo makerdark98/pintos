@@ -336,3 +336,33 @@ cond_broadcast (struct condition *cond, struct lock *lock)
   while (!list_empty (&cond->waiters))
     cond_signal (cond, lock);
 }
+
+void latch_init (struct latch *latch)
+{
+  ASSERT (latch != NULL);
+
+  lock_init (&latch->monitor_lock);
+  cond_init (&latch->rel_cond);
+  latch->released = false;
+}
+
+void latch_set_released (struct latch *latch, bool flag)
+{
+  ASSERT (latch != NULL);
+
+  lock_acquire (&latch->monitor_lock);
+  latch->released = flag;
+  if (latch->released)
+    cond_broadcast (&latch->rel_cond, &latch->monitor_lock);
+  lock_release (&latch->monitor_lock);
+}
+
+void latch_wait (struct latch *latch)
+{
+  ASSERT (latch != NULL);
+
+  lock_acquire (&latch->monitor_lock);
+  if (!latch->released)
+    cond_wait (&latch->rel_cond, &latch->monitor_lock);
+  lock_release (&latch->monitor_lock);
+}

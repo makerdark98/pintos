@@ -166,7 +166,7 @@ tid_t
 thread_create (const char *name, int priority,
                thread_func *function, void *aux) 
 {
-  struct thread *t;
+  struct thread *t, *current;
   struct kernel_thread_frame *kf;
   struct switch_entry_frame *ef;
   struct switch_threads_frame *sf;
@@ -175,6 +175,7 @@ thread_create (const char *name, int priority,
 
   ASSERT (function != NULL);
 
+  current = thread_current ();
   /* Allocate thread. */
   t = palloc_get_page (PAL_ZERO);
   if (t == NULL)
@@ -183,6 +184,7 @@ thread_create (const char *name, int priority,
   /* Initialize thread. */
   init_thread (t, name, priority);
   tid = t->tid = allocate_tid ();
+  list_push_back (&current->children, &t->children_elem);
 
   /* Prepare thread for first run by initializing its stack.
      Do this atomically so intermediate values for the 'stack' 
@@ -250,6 +252,26 @@ thread_unblock (struct thread *t)
   intr_set_level (old_level);
 }
 
+/* Parent Thread wait for children thread. */
+void
+thread_join (void)
+{
+  struct thread *current, *child;
+  struct list_elem *e;
+
+  current = thread_current ();
+
+  for (e = list_begin (&current->children);
+      e != list_end (&current->children);
+      e = list_next (e))
+  {
+    child = list_entry (e, struct thread, children_elem);
+    sema_down (&child->can_die);
+    latch_wait (&child->ready_to_die);
+    sema_up (&child->can_die);
+  }
+}
+
 /* Returns the name of the running thread. */
 const char *
 thread_name (void) 
@@ -290,6 +312,9 @@ thread_exit (void)
 {
   ASSERT (!intr_context ());
 
+  struct thread *current;
+
+  current = thread_current ();
 #ifdef USERPROG
   process_exit ();
 #endif
@@ -298,8 +323,12 @@ thread_exit (void)
      and schedule another process.  That process will destroy us
      when it calls thread_schedule_tail(). */
   intr_disable ();
-  list_remove (&thread_current()->allelem);
-  thread_current ()->status = THREAD_DYING;
+  sema_down (&current->can_die);
+  latch_set_released (&current->ready_to_die, true);
+  list_remove (&current->children_elem);
+  list_remove (&current->allelem);
+  current->status = THREAD_DYING;
+  
   schedule ();
   NOT_REACHED ();
 }
@@ -470,6 +499,10 @@ init_thread (struct thread *t, const char *name, int priority)
   t->priority = priority;
   t->magic = THREAD_MAGIC;
   list_push_back (&all_list, &t->allelem);
+  /* Configure Members for thread_join(). */
+  list_init (&t->children);
+  latch_init (&t->ready_to_die);
+  sema_init (&t->can_die, 1);
 }
 
 /* Allocates a SIZE-byte frame at the top of thread T's stack and

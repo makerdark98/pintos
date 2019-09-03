@@ -30,7 +30,7 @@ None.
     struct latch ready_to_die;   /* Release when thread about to die. */
     struct semaphore can_die;    /* Up when thread allowed to die. */
     struct list children;        /* List of child threads. */
-    list_elem children_elem;     /* Element of `children' list. */
+    list_elem children_elem;     /* Element of `children` list. */
      ```
 
 ### ALGORITHMS

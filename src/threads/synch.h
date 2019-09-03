@@ -41,6 +41,17 @@ void cond_wait (struct condition *, struct lock *);
 void cond_signal (struct condition *, struct lock *);
 void cond_broadcast (struct condition *, struct lock *);
 
+struct latch
+  {
+    bool released;              /* Released yet? */
+    struct lock monitor_lock;   /* Monitor lock. */
+    struct condition rel_cond;  /* Signaled when released. */
+  };
+
+void latch_init (struct latch *);
+void latch_set_released (struct latch *, bool);
+void latch_wait (struct latch *);
+
 /* Optimization barrier.
 
    The compiler will not reorder operations across an
