@@ -71,6 +71,9 @@ static void schedule (void);
 void thread_schedule_tail (struct thread *prev);
 static tid_t allocate_tid (void);
 
+static bool thread_compare_priority (const struct list_elem *,
+    const struct list_elem *, void *);
+
 /* Initializes the threading system by transforming the code
    that's currently running into a thread.  This can't work in
    general and it is possible in this case only because loader.S
@@ -526,10 +529,16 @@ alloc_frame (struct thread *t, size_t size)
 static struct thread *
 next_thread_to_run (void) 
 {
+  struct list_elem *e;
+
   if (list_empty (&ready_list))
     return idle_thread;
-  else
-    return list_entry (list_pop_front (&ready_list), struct thread, elem);
+  else 
+  {
+    e = list_max (&ready_list, thread_compare_priority, NULL);
+    list_remove (e);
+    return list_entry (e, struct thread, elem);
+  }
 }
 
 /* Completes a thread switch by activating the new thread's page
@@ -614,6 +623,17 @@ allocate_tid (void)
 
   return tid;
 }
+
+static bool
+thread_compare_priority (const struct list_elem *_a,
+    const struct list_elem *_b, void *aux UNUSED)
+{
+  const struct thread *a = list_entry (_a, struct thread, elem);
+  const struct thread *b = list_entry (_b, struct thread, elem);
+
+  return a->priority < b->priority;
+}
+
 
 /* Offset of `stack' member within `struct thread'.
    Used by switch.S, which can't figure it out on its own. */
