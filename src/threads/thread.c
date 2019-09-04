@@ -71,7 +71,7 @@ static void schedule (void);
 void thread_schedule_tail (struct thread *prev);
 static tid_t allocate_tid (void);
 
-static int thread_get_donated_priority (const struct thread *);
+static int thread_get_donated_priority (struct thread *);
 
 /* Initializes the threading system by transforming the code
    that's currently running into a thread.  This can't work in
@@ -639,13 +639,13 @@ bool
 thread_compare_priority (const struct list_elem *_a,
     const struct list_elem *_b, void *aux UNUSED)
 {
-  const struct thread *a = list_entry (_a, struct thread, elem);
-  const struct thread *b = list_entry (_b, struct thread, elem);
+  struct thread *a = list_entry (_a, struct thread, elem);
+  struct thread *b = list_entry (_b, struct thread, elem);
 
   return thread_get_donated_priority (a) < thread_get_donated_priority (b);
 }
 
-static int thread_get_donated_priority (const struct thread *t) 
+static int thread_get_donated_priority (struct thread *t) 
 {
   int priority = t->priority;
   int temp_priority;
