@@ -181,8 +181,10 @@ thread_tick (void)
   }
   if (thread_mlfqs)
   {
-    thread_foreach (thread_inc_priority, NULL);
-    thread_foreach (thread_inc_recent_cpu, NULL);
+    if (current != idle_thread)
+      thread_inc_recent_cpu (current, NULL);
+    if (t_ticks % 4 == 0)
+      thread_foreach (thread_calculate_priority, NULL);
 
     if (t_ticks % TIMER_FREQ == 0)
     {
@@ -191,8 +193,6 @@ thread_tick (void)
       thread_foreach (thread_calculate_recent_cpu, NULL);
     }
 
-    if (t_ticks % 4 == 0)
-      thread_foreach (thread_calculate_priority, NULL);
   }
 
   intr_set_level (old_level);
@@ -473,8 +473,14 @@ thread_get_priority (void)
 void
 thread_set_nice (int nice) 
 {
-  thread_current() ->nice = nice;
-  thread_calculate_priority (thread_current(), NULL);
+  struct thread *current;
+  nice = nice > -20 ? nice : -20;
+  current = thread_current ();
+  current->nice = nice;
+
+  thread_calculate_recent_cpu (current, NULL);
+  thread_calculate_priority (current, NULL);
+
   thread_yield ();
 }
 
@@ -792,9 +798,8 @@ thread_calculate_recent_cpu (struct thread *t, void *aux UNUSED)
 static void
 thread_calculate_priority (struct thread *t, void *aux UNUSED)
 {
-  t->priority = PRI_MAX - t->nice * 2
-    - fixed_point_to_int_round_nearest (
-        fixed_point_div_by_int (t->recent_cpu, 4));
+  t->priority = PRI_MAX - fixed_point_to_int_round_nearest (
+        fixed_point_div_by_int (t->recent_cpu, 4)) - t->nice * 2;
   t->priority = t->priority < PRI_MAX ? t->priority : PRI_MAX;
   t->priority = t->priority > PRI_MIN ? t->priority : PRI_MIN;
 }
