@@ -4,6 +4,7 @@
 #include <debug.h>
 #include <list.h>
 #include <stdint.h>
+#include <fixed_point.h>
 #include "threads/synch.h"
 
 /* States in a thread's life cycle. */
@@ -102,6 +103,10 @@ struct thread
     struct list_elem children_elem;     /* Element of `children` list. */
     /* Priority Donation */
     struct list holding_locks;
+    /* Advanced Queue */
+    int nice;
+    fixed_point_t recent_cpu;
+    int64_t wakeup_time;
 
 #ifdef USERPROG
     /* Owned by userprog/process.c. */
@@ -116,6 +121,7 @@ struct thread
    If true, use multi-level feedback queue scheduler.
    Controlled by kernel command-line option "-o mlfqs". */
 extern bool thread_mlfqs;
+extern struct list sleeping_threads;
 
 void thread_init (void);
 void thread_start (void);
