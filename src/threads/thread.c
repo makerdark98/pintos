@@ -16,11 +16,6 @@
 #include "userprog/process.h"
 #endif
 
-static inline int fetch_and_add (int* variable, int value)
-{
-  asm volatile("lock; xaddl %0, %1" : "+r" (value), "+m" (*variable) :: "memory");
-  return value;
-}
 
 /* Random value for struct thread's `magic' member.
    Used to detect stack overflow.  See the big comment at the top
@@ -58,7 +53,6 @@ static long long kernel_ticks;  /* # of timer ticks in kernel threads. */
 static long long user_ticks;    /* # of timer ticks in user programs. */
 
 static fixed_point_t load_avg;
-static int ready_threads;
 
 /* Scheduling. */
 #define TIME_SLICE 4            /* # of timer ticks to give each thread. */
@@ -82,10 +76,6 @@ void thread_schedule_tail (struct thread *prev);
 static tid_t allocate_tid (void);
 
 static int thread_get_donated_priority (struct thread *);
-static bool thread_compare_wakeuptime (const struct list_elem *,
-    const struct list_elem *, void *);
-static void thread_inc_priority (struct thread*, void*);
-static void thread_inc_recent_cpu (struct thread *, void *);
 static void thread_calculate_load_avg (int);
 static void thread_calculate_recent_cpu (struct thread *, void *);
 static void thread_calculate_priority (struct thread *, void *);
@@ -112,7 +102,6 @@ thread_init (void)
   list_init (&ready_list);
   list_init (&all_list);
   list_init (&sleeping_threads);
-  ready_threads = 0;
 
   /* Set up a thread structure for the running thread. */
   initial_thread = running_thread ();
@@ -143,8 +132,8 @@ thread_start (void)
 void
 thread_tick (void) 
 {
-  struct thread *current, *t;
-  struct list_elem *e;
+  struct thread *current;
+  enum intr_level old_level;
 
   current = thread_current ();
 
@@ -158,44 +147,34 @@ thread_tick (void)
   else
     kernel_ticks++;
 
-  enum intr_level old_level;
-  old_level = intr_disable ();
-
   int64_t t_ticks = timer_ticks ();
 
-  while (true)
-  {
-    e = list_min (&sleeping_threads, thread_compare_wakeuptime, NULL);
-    if (e == list_end (&sleeping_threads))
-      break;
-    t = list_entry (e, struct thread, elem);
-    ASSERT (is_thread (t));
+  timer_awake (t_ticks);
 
-    if (t->wakeup_time <= t_ticks)
-    {
-      list_remove (e);
-      thread_unblock (t);
-    }
-    else
-      break;
-  }
   if (thread_mlfqs)
   {
     if (current != idle_thread)
-      thread_inc_recent_cpu (current, NULL);
+      __sync_fetch_and_add (&current->recent_cpu, int_to_fixed_point (1));
+
     if (t_ticks % 4 == 0)
+    {
+      old_level = intr_disable ();
       thread_foreach (thread_calculate_priority, NULL);
+      intr_set_level (old_level);
+    }
 
     if (t_ticks % TIMER_FREQ == 0)
     {
-      int tmp = list_size (&ready_list) + (current == idle_thread ? 0 : 1);
-      thread_calculate_load_avg (tmp);
-      thread_foreach (thread_calculate_recent_cpu, NULL);
-    }
+      old_level = intr_disable ();
 
+      thread_calculate_load_avg (list_size (&ready_list) 
+          + (current == idle_thread ? 0 : 1));
+      thread_foreach (thread_calculate_recent_cpu, NULL);
+
+      intr_set_level (old_level);
+    }
   }
 
-  intr_set_level (old_level);
   /* Enforce preemption. */
   if (++thread_ticks >= TIME_SLICE)
     intr_yield_on_return ();
@@ -315,7 +294,6 @@ thread_unblock (struct thread *t)
   old_level = intr_disable ();
   ASSERT (t->status == THREAD_BLOCKED);
   list_push_back (&ready_list, &t->elem);
-  fetch_and_add (&ready_threads, 0);
   t->status = THREAD_READY;
   intr_set_level (old_level);
 }
@@ -413,10 +391,7 @@ thread_yield (void)
 
   old_level = intr_disable ();
   if (cur != idle_thread)
-  {
     list_push_back (&ready_list, &cur->elem);
-    fetch_and_add (&ready_threads, 1);
-  }
   cur->status = THREAD_READY;
   schedule ();
   intr_set_level (old_level);
@@ -461,9 +436,7 @@ thread_get_priority (void)
   if (!thread_mlfqs)
     retval = thread_get_donated_priority (current);
   else
-  {
     retval = current->priority;
-  }
 
   intr_set_level (old_level);
   return retval;
@@ -505,6 +478,14 @@ thread_get_recent_cpu (void)
 {
   return fixed_point_to_int_round_nearest ( fixed_point_mul_to_int (
         thread_current ()->recent_cpu, 100));
+}
+
+bool 
+thread_compare_wakeuptime (const struct list_elem *_a,
+    const struct list_elem *_b, void *aux UNUSED)
+{
+  return list_entry (_a, struct thread, elem)->wakeup_time < 
+    list_entry (_b, struct thread, elem)->wakeup_time;
 }
 
 /* Idle thread.  Executes when no other thread is ready to run.
@@ -720,19 +701,19 @@ bool
 thread_compare_priority (const struct list_elem *_a,
     const struct list_elem *_b, void *aux UNUSED)
 {
-  struct thread *a = list_entry (_a, struct thread, elem);
-  struct thread *b = list_entry (_b, struct thread, elem);
-
-  return thread_get_donated_priority (a) < thread_get_donated_priority (b);
+  return thread_get_donated_priority (
+      list_entry (_a, struct thread, elem)) <
+    thread_get_donated_priority (
+        list_entry (_b, struct thread, elem));
 }
 
 static int thread_get_donated_priority (struct thread *t) 
 {
-  int priority = t->priority;
-  int temp_priority;
+  int retval, temp_priority;
   struct list_elem *lock_elem, *thread_elem;
   struct list *waiters;
 
+  retval = t->priority;
   for (lock_elem = list_begin (&t->holding_locks);
       lock_elem != list_end (&t->holding_locks);
       lock_elem = list_next (lock_elem))
@@ -744,36 +725,13 @@ static int thread_get_donated_priority (struct thread *t)
     {
       temp_priority = thread_get_donated_priority (
           list_entry (thread_elem, struct thread, elem));
-      priority = priority > temp_priority ? priority : temp_priority;
+      retval = retval > temp_priority ? retval : temp_priority;
     }
   }
 
-  return priority;
+  return retval;
 }
 
-static bool 
-thread_compare_wakeuptime (const struct list_elem *_a,
-    const struct list_elem *_b, void *aux UNUSED)
-{
-  struct thread *a = list_entry (_a, struct thread, elem);
-  struct thread *b = list_entry (_b, struct thread, elem);
-
-  ASSERT (is_thread(a));
-  ASSERT (is_thread(b));
-
-  return a->wakeup_time < b->wakeup_time;
-}
-
-static void
-thread_inc_priority (struct thread *t, void *aux UNUSED)
-{
-  fetch_and_add (&t->priority, 1);
-}
-static void
-thread_inc_recent_cpu (struct thread *t, void *aux UNUSED)
-{
-  t->recent_cpu = fixed_point_add_to_int (t->recent_cpu, 1);
-}
 static void 
 thread_calculate_load_avg (int ready_threads)
 {
@@ -787,10 +745,11 @@ thread_calculate_load_avg (int ready_threads)
 static void
 thread_calculate_recent_cpu (struct thread *t, void *aux UNUSED)
 {
+  fixed_point_t temp = fixed_point_mul_to_int (load_avg, 2);
+
   t->recent_cpu = fixed_point_add_to_int (
       fixed_point_mul( 
-        fixed_point_div (fixed_point_mul_to_int (load_avg, 2),
-          fixed_point_add_to_int (fixed_point_mul_to_int (load_avg, 2), 1)),
+        fixed_point_div (temp, fixed_point_add_to_int (temp, 1)),
         t->recent_cpu),
       t->nice);
 }

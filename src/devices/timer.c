@@ -131,6 +131,26 @@ timer_nsleep (int64_t ns)
   real_time_sleep (ns, 1000 * 1000 * 1000);
 }
 
+void
+timer_awake (int64_t now)
+{
+  struct list_elem *e;
+  struct thread *t;
+  enum intr_level old_level;
+
+  old_level = intr_disable ();
+
+  while ((e = list_min (&sleeping_threads, thread_compare_wakeuptime, NULL))
+      != list_end (&sleeping_threads) &&
+      list_entry (e, struct thread, elem)->wakeup_time <= now)
+  {
+    t = list_entry (e, struct thread, elem);
+    list_remove (e);
+    thread_unblock (t);
+  }
+
+  intr_set_level (old_level);
+}
 /* Busy-waits for approximately MS milliseconds.  Interrupts need
    not be turned on.
 
