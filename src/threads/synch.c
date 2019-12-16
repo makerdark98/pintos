@@ -32,6 +32,10 @@
 #include "threads/interrupt.h"
 #include "threads/thread.h"
 
+static int get_semaphore_priority (const struct semaphore *);
+static bool less_semaphore_priority (const struct list_elem *,
+    const struct list_elem *, void *);
+
 /* Initializes semaphore SEMA to VALUE.  A semaphore is a
    nonnegative integer along with two atomic operators for
    manipulating it:
@@ -117,7 +121,7 @@ sema_up (struct semaphore *sema)
   if (!list_empty (&sema->waiters))
   {
     e = list_max (&sema->waiters,
-        compare_thread_priority_less, NULL);
+        less_thread_priority, NULL);
     list_remove (e);
     thread_unblock (list_entry (e, struct thread, elem));
   }
@@ -330,9 +334,13 @@ cond_signal (struct condition *cond, struct lock *lock UNUSED)
   ASSERT (!intr_context ());
   ASSERT (lock_held_by_current_thread (lock));
 
-  if (!list_empty (&cond->waiters)) 
-    sema_up (&list_entry (list_pop_front (&cond->waiters),
-                          struct semaphore_elem, elem)->semaphore);
+  if (!list_empty (&cond->waiters))
+  {
+    struct list_elem *e = list_max (&cond->waiters,
+        less_semaphore_priority, NULL);
+    list_remove (e);
+    sema_up (&list_entry (e, struct semaphore_elem, elem)->semaphore);
+  }
 }
 
 /* Wakes up all threads, if any, waiting on COND (protected by
@@ -349,4 +357,30 @@ cond_broadcast (struct condition *cond, struct lock *lock)
 
   while (!list_empty (&cond->waiters))
     cond_signal (cond, lock);
+}
+
+static int
+get_semaphore_priority (const struct semaphore *semaphore)
+{
+  int retval = PRI_MIN;
+  struct list_elem *e;
+
+  for (e = list_begin (&semaphore->waiters);
+      e != list_end (&semaphore->waiters);
+      e = list_next (e))
+  {
+    int waiter_priority = get_thread_priority (list_entry (e, 
+          struct thread, elem));
+    retval = retval > waiter_priority ? retval : waiter_priority;
+  }
+
+  return retval;
+}
+static bool
+less_semaphore_priority (const struct list_elem *a,
+    const struct list_elem *b, void *aux UNUSED)
+{
+  return get_semaphore_priority (&list_entry (a, struct semaphore_elem,
+        elem)->semaphore) < get_semaphore_priority (&list_entry (b,
+          struct semaphore_elem, elem)->semaphore);
 }

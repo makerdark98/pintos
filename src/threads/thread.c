@@ -61,7 +61,6 @@ bool thread_mlfqs;
 
 static void kernel_thread (thread_func *, void *aux);
 
-static int get_thread_priority (struct thread *);
 static int get_lock_priority (struct lock *);
 static void idle (void *aux UNUSED);
 static struct thread *running_thread (void);
@@ -350,7 +349,7 @@ thread_set_priority (int new_priority)
   thread_yield ();
 }
 
-static int
+int
 get_thread_priority (struct thread *t)
 {
   ASSERT (is_thread (t));
@@ -399,7 +398,7 @@ thread_get_priority (void)
 }
 
 bool 
-compare_thread_priority_less (const struct list_elem *a, const struct list_elem *b, void *aux UNUSED)
+less_thread_priority (const struct list_elem *a, const struct list_elem *b, void *aux UNUSED)
 {
   return get_thread_priority (list_entry (a, struct thread, elem)) < get_thread_priority (list_entry (b, struct thread, elem));
 }
@@ -551,7 +550,7 @@ next_thread_to_run (void)
   else
   {
     struct list_elem *e = list_max (&ready_list,
-          compare_thread_priority_less, NULL);
+          less_thread_priority, NULL);
     list_remove (e);
     return list_entry (e, struct thread, elem);
   }
