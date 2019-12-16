@@ -210,6 +210,7 @@ thread_create (const char *name, int priority,
 
   /* Add to run queue. */
   thread_unblock (t);
+  thread_yield ();
 
   return tid;
 }
@@ -346,6 +347,7 @@ void
 thread_set_priority (int new_priority) 
 {
   thread_current ()->priority = new_priority;
+  thread_yield ();
 }
 
 static int
@@ -510,10 +512,10 @@ next_thread_to_run (void)
     return idle_thread;
   else
   {
-    struct thread *retval = list_entry (list_max (&ready_list,
-          compare_thread_priority_less, NULL), struct thread, elem);
-    list_remove (&retval->elem);
-    return retval;
+    struct list_elem *e = list_max (&ready_list,
+          compare_thread_priority_less, NULL);
+    list_remove (e);
+    return list_entry (e, struct thread, elem);
   }
 }
 
