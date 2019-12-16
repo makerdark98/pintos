@@ -62,7 +62,7 @@ bool thread_mlfqs;
 static void kernel_thread (thread_func *, void *aux);
 
 static int get_thread_priority (struct thread *);
-static bool compare_thread_priority_less (const struct list_elem *, const struct list_elem *, void *);
+static int get_lock_priority (struct lock *);
 static void idle (void *aux UNUSED);
 static struct thread *running_thread (void);
 static struct thread *next_thread_to_run (void);
@@ -353,13 +353,55 @@ thread_set_priority (int new_priority)
 static int
 get_thread_priority (struct thread *t)
 {
-  return t->priority;
+  ASSERT (is_thread (t));
+  struct list_elem *e;
+  int retval = t->priority;
+
+  enum intr_level old_level = intr_disable ();
+
+  for (e = list_begin (&t->holding_locks);
+      e != list_end (&t->holding_locks);
+      e = list_next (e))
+  {
+    int lock_priority = get_lock_priority (list_entry (e, struct lock,
+          elem));
+    retval = retval > lock_priority ? retval : lock_priority;
+  }
+
+  intr_set_level (old_level);
+
+  return retval;
+}
+
+static int
+get_lock_priority (struct lock *lock)
+{
+  int retval = PRI_MIN;
+  struct list_elem *e;
+
+  struct list *waiters = lock_get_waiters (lock);
+  for (e = list_begin (waiters);
+      e != list_end (waiters);
+      e = list_next (e)) 
+  {
+    int waiter_priority = get_thread_priority ( list_entry (e,
+          struct thread, elem));
+    retval = retval  > waiter_priority ? retval : waiter_priority;
+  }
+
+  return retval;
 }
 /* Returns the current thread's priority. */
 int
 thread_get_priority (void) 
 {
   return get_thread_priority (thread_current ());
+}
+
+bool 
+compare_thread_priority_less (const struct list_elem *a, const struct list_elem *b, void *aux UNUSED)
+{
+  return get_thread_priority (list_entry (a, struct thread, elem)) < get_thread_priority (list_entry (b, struct thread, elem));
 }
 
 /* Sets the current thread's nice value to NICE. */
@@ -442,11 +484,6 @@ kernel_thread (thread_func *function, void *aux)
   thread_exit ();       /* If function() returns, kill the thread. */
 }
 
-static bool 
-compare_thread_priority_less (const struct list_elem *a, const struct list_elem *b, void *aux UNUSED)
-{
-  return get_thread_priority (list_entry (a, struct thread, elem)) < get_thread_priority (list_entry (b, struct thread, elem));
-}
 
 /* Returns the running thread. */
 struct thread *
@@ -484,6 +521,7 @@ init_thread (struct thread *t, const char *name, int priority)
   t->stack = (uint8_t *) t + PGSIZE;
   t->priority = priority;
   t->magic = THREAD_MAGIC;
+  list_init (&t->holding_locks);
   list_push_back (&all_list, &t->allelem);
 }
 
