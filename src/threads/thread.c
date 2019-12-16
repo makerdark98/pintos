@@ -61,6 +61,8 @@ bool thread_mlfqs;
 
 static void kernel_thread (thread_func *, void *aux);
 
+static int get_thread_priority (struct thread *);
+static bool compare_thread_priority_less (const struct list_elem *, const struct list_elem *, void *);
 static void idle (void *aux UNUSED);
 static struct thread *running_thread (void);
 static struct thread *next_thread_to_run (void);
@@ -346,11 +348,16 @@ thread_set_priority (int new_priority)
   thread_current ()->priority = new_priority;
 }
 
+static int
+get_thread_priority (struct thread *t)
+{
+  return t->priority;
+}
 /* Returns the current thread's priority. */
 int
 thread_get_priority (void) 
 {
-  return thread_current ()->priority;
+  return get_thread_priority (thread_current ());
 }
 
 /* Sets the current thread's nice value to NICE. */
@@ -433,6 +440,12 @@ kernel_thread (thread_func *function, void *aux)
   thread_exit ();       /* If function() returns, kill the thread. */
 }
 
+static bool 
+compare_thread_priority_less (const struct list_elem *a, const struct list_elem *b, void *aux UNUSED)
+{
+  return get_thread_priority (list_entry (a, struct thread, elem)) < get_thread_priority (list_entry (b, struct thread, elem));
+}
+
 /* Returns the running thread. */
 struct thread *
 running_thread (void) 
@@ -496,7 +509,12 @@ next_thread_to_run (void)
   if (list_empty (&ready_list))
     return idle_thread;
   else
-    return list_entry (list_pop_front (&ready_list), struct thread, elem);
+  {
+    struct thread *retval = list_entry (list_max (&ready_list,
+          compare_thread_priority_less, NULL), struct thread, elem);
+    list_remove (&retval->elem);
+    return retval;
+  }
 }
 
 /* Completes a thread switch by activating the new thread's page
