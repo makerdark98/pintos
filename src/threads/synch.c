@@ -365,8 +365,8 @@ get_semaphore_priority (const struct semaphore *semaphore)
   int retval = PRI_MIN;
   struct list_elem *e;
 
-  for (e = list_begin (&semaphore->waiters);
-      e != list_end (&semaphore->waiters);
+  for (e = list_begin ((struct list *)&semaphore->waiters);
+      e != list_end ((struct list *)&semaphore->waiters);
       e = list_next (e))
   {
     int waiter_priority = get_thread_priority (list_entry (e, 
