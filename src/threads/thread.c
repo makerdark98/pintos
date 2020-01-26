@@ -11,15 +11,12 @@
 #include "threads/switch.h"
 #include "threads/synch.h"
 #include "threads/vaddr.h"
+#include "threads/malloc.h"
 #include "devices/timer.h"
 #ifdef USERPROG
 #include "userprog/process.h"
 #endif
 
-/* Random value for struct thread's `magic' member.
-   Used to detect stack overflow.  See the big comment at the top
-   of thread.h for details. */
-#define THREAD_MAGIC 0xcd6abf4b
 
 /* List of processes in THREAD_READY state, that is, processes
    that are ready to run but not actually running. */
@@ -28,6 +25,8 @@ static struct list ready_list;
 /* List of all processes.  Processes are added to this list
    when they are first scheduled and removed when they exit. */
 static struct list all_list;
+/* List of data of dead processes */
+static struct list dead_data_list;
 
 /* Idle thread. */
 static struct thread *idle_thread;
@@ -65,14 +64,13 @@ static void kernel_thread (thread_func *, void *aux);
 static void update_load_avg (int ready_threads);
 static void update_thread_priority (struct thread *, void *);
 static void increase_thread_recent_cpu (struct thread *, void *);
-static void increase_thread_priority (struct thread *, void *);
 static void update_thread_recent_cpu (struct thread *, void *);
 static int get_lock_priority (struct lock *);
 static void idle (void *aux UNUSED);
 static struct thread *running_thread (void);
 static struct thread *next_thread_to_run (void);
 static void init_thread (struct thread *, const char *name, int priority);
-static bool is_thread (struct thread *) UNUSED;
+static bool is_thread (struct thread *t);
 static void *alloc_frame (struct thread *, size_t size);
 static void schedule (void);
 void thread_schedule_tail (struct thread *prev);
@@ -99,6 +97,7 @@ thread_init (void)
   lock_init (&tid_lock);
   list_init (&ready_list);
   list_init (&all_list);
+  list_init (&dead_data_list);
 
   /* Set up a thread structure for the running thread. */
   initial_thread = running_thread ();
@@ -230,6 +229,15 @@ thread_create (const char *name, int priority,
   sf->eip = switch_entry;
   sf->ebp = 0;
 
+#ifdef USERPROG
+  struct thread *parent = thread_current ();
+  t->parent = parent;
+  t->is_load = false;
+  list_push_back (&parent->children, &t->child_elem);
+  sema_init (&t->load_sema, 0);
+  sema_init (&t->exit_sema, 0);
+#endif
+
   intr_set_level (old_level);
 
   /* Add to run queue. */
@@ -316,6 +324,7 @@ void
 thread_exit (void) 
 {
   ASSERT (!intr_context ());
+  struct thread *current = thread_current ();
 
 #ifdef USERPROG
   process_exit ();
@@ -325,7 +334,11 @@ thread_exit (void)
      and schedule another process.  That process will destroy us
      when it calls thread_schedule_tail(). */
   intr_disable ();
-  list_remove (&thread_current()->allelem);
+  list_remove (&current->allelem);
+#ifdef USERPROG
+  /* Release die right */
+  sema_up (&current->exit_sema);
+#endif
   thread_current ()->status = THREAD_DYING;
   schedule ();
   NOT_REACHED ();
@@ -555,12 +568,12 @@ increase_thread_recent_cpu (struct thread *t, void *aux UNUSED)
   t->recent_cpu = FIXED_ADD (t->recent_cpu, FIXED_I2F (1));
 }
 
-static void
-increase_thread_priority (struct thread *t, void *aux UNUSED)
+/* Returns true if T appears to point to a valid thread. */
+static bool
+is_thread (struct thread *t)
 {
-  t->priority = t->priority + 1 < PRI_MAX ? t->priority + 1 : PRI_MAX;
+  return t != NULL && t->magic == THREAD_MAGIC;
 }
-
 static void
 update_thread_recent_cpu (struct thread *t, void *aux UNUSED)
 {
@@ -586,12 +599,6 @@ running_thread (void)
   return pg_round_down (esp);
 }
 
-/* Returns true if T appears to point to a valid thread. */
-static bool
-is_thread (struct thread *t)
-{
-  return t != NULL && t->magic == THREAD_MAGIC;
-}
 
 /* Does basic initialization of T as a blocked thread named
    NAME. */
@@ -612,6 +619,9 @@ init_thread (struct thread *t, const char *name, int priority)
   t->recent_cpu = 0;
   list_init (&t->holding_locks);
   list_push_back (&all_list, &t->allelem);
+#ifdef USERPROG
+  list_init (&t->children);
+#endif
 }
 
 /* Allocates a SIZE-byte frame at the top of thread T's stack and
@@ -687,7 +697,8 @@ thread_schedule_tail (struct thread *prev)
   if (prev != NULL && prev->status == THREAD_DYING && prev != initial_thread) 
     {
       ASSERT (prev != cur);
-      palloc_free_page (prev);
+      if (!prev->is_load)
+        palloc_free_page (prev);
     }
 }
 

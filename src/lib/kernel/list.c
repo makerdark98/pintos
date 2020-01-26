@@ -522,3 +522,17 @@ list_min (struct list *list, list_less_func *less, void *aux)
     }
   return min;
 }
+
+struct list_elem *
+list_search (struct list *list, list_compare_func compare, void *aux)
+{
+  struct list_elem *e;
+  for (e = list_begin (list);
+      e != list_end (list);
+      e = list_next (e))
+  {
+    if (compare(e, aux))
+      return e;
+  }
+  return NULL;
+}

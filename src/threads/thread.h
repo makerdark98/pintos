@@ -5,6 +5,7 @@
 #include <list.h>
 #include <stdint.h>
 #include <fixed.h>
+#include "threads/synch.h"
 
 /* States in a thread's life cycle. */
 enum thread_status
@@ -19,6 +20,11 @@ enum thread_status
    You can redefine this to whatever type you like. */
 typedef int tid_t;
 #define TID_ERROR ((tid_t) -1)          /* Error value for tid_t. */
+
+/* Random value for struct thread's `magic' member.
+   Used to detect stack overflow.  See the big comment at the top
+   of thread.h for details. */
+#define THREAD_MAGIC 0xcd6abf4b
 
 /* Thread priorities. */
 #define PRI_MIN 0                       /* Lowest priority. */
@@ -102,12 +108,22 @@ struct thread
 #ifdef USERPROG
     /* Owned by userprog/process.c. */
     uint32_t *pagedir;                  /* Page directory. */
+    char *process_name;
+
+    struct thread* parent;
+    struct list_elem child_elem;
+    struct list children;
+
+    int success_bear;
+    bool is_load;
+    struct semaphore load_sema;
+    struct semaphore exit_sema;
+    int exit_status;
 #endif
 
     /* Owned by thread.c. */
     unsigned magic;                     /* Detects stack overflow. */
   };
-
 /* If false (default), use round-robin scheduler.
    If true, use multi-level feedback queue scheduler.
    Controlled by kernel command-line option "-o mlfqs". */
@@ -128,6 +144,7 @@ void thread_unblock (struct thread *);
 struct thread *thread_current (void);
 tid_t thread_tid (void);
 const char *thread_name (void);
+
 
 void thread_exit (void) NO_RETURN;
 void thread_yield (void);

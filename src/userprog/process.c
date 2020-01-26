@@ -17,9 +17,12 @@
 #include "threads/palloc.h"
 #include "threads/thread.h"
 #include "threads/vaddr.h"
+#include "threads/malloc.h"
+#include "threads/synch.h"
 
 static thread_func start_process NO_RETURN;
 static bool load (const char *cmdline, void (**eip) (void), void **esp);
+static bool arguments_stack (char **parse, int count, void **esp);
 
 /* Starts a new thread running a user program loaded from
    FILENAME.  The new thread may be scheduled (and may even exit)
@@ -40,8 +43,20 @@ process_execute (const char *file_name)
 
   /* Create a new thread to execute FILE_NAME. */
   tid = thread_create (file_name, PRI_DEFAULT, start_process, fn_copy);
+
   if (tid == TID_ERROR)
     palloc_free_page (fn_copy); 
+
+  struct thread *child = get_child_process (tid);
+
+  if (child != NULL) 
+  {
+    sema_down (&child->load_sema);
+    if (!child->is_load)
+      tid = -1;
+  }
+  else
+    tid = -1;
   return tid;
 }
 
@@ -50,7 +65,7 @@ process_execute (const char *file_name)
 static void
 start_process (void *file_name_)
 {
-  char *file_name = file_name_;
+  struct thread *current = thread_current ();
   struct intr_frame if_;
   bool success;
 
@@ -59,11 +74,36 @@ start_process (void *file_name_)
   if_.gs = if_.fs = if_.es = if_.ds = if_.ss = SEL_UDSEG;
   if_.cs = SEL_UCSEG;
   if_.eflags = FLAG_IF | FLAG_MBS;
-  success = load (file_name, &if_.eip, &if_.esp);
+
+  int count = 0;
+  char *token, *save_ptr;
+  for (token = strtok_r (file_name_, "\t ", &save_ptr);
+      token != NULL;
+      token = strtok_r (NULL, " ", &save_ptr))
+  {
+    count ++;
+  }
+
+  token = file_name_;
+  char **parsed = (char **)malloc (sizeof (char *) * count);
+  int i;
+  for (i = 0; i < count; i ++)
+  {
+    parsed[i] = token;
+    while (token < save_ptr && *token != '\0')
+      token ++;
+    token++;
+  }
+  success = load (parsed[0], &if_.eip, &if_.esp);
+  success = success && arguments_stack (parsed, count, &if_.esp);
+
+  /* casting to bool type */
+  current->is_load = success ? true : false;
+  sema_up (&current->load_sema);
 
   /* If load failed, quit. */
-  palloc_free_page (file_name);
-  if (!success) 
+  palloc_free_page (file_name_);
+  if (!success)
     thread_exit ();
 
   /* Start the user process by simulating a return from an
@@ -86,9 +126,16 @@ start_process (void *file_name_)
    This function will be implemented in problem 2-2.  For now, it
    does nothing. */
 int
-process_wait (tid_t child_tid UNUSED) 
+process_wait (tid_t child_tid) 
 {
-  return -1;
+  struct thread * child = get_child_process (child_tid);
+  if (child == NULL)
+    return -1;
+  sema_down (&child->exit_sema);
+
+  int retval = child->exit_status;
+  remove_child_process (child);
+  return retval;
 }
 
 /* Free the current process's resources. */
@@ -314,6 +361,65 @@ load (const char *file_name, void (**eip) (void), void **esp)
   /* We arrive here whether the load is successful or not. */
   file_close (file);
   return success;
+}
+
+static bool
+compare_process_pid (const struct list_elem *e, void *pid)
+{
+  struct thread *t = list_entry (e, struct thread, child_elem);
+  return t->tid == (tid_t)pid;
+}
+
+struct thread *
+get_child_process (tid_t pid)
+{
+  struct list_elem *e;
+  struct thread *current = thread_current ();
+  e = list_search (&current->children, compare_process_pid, (void *)pid);
+
+  return e != NULL ? list_entry (e, struct thread, child_elem) : NULL;
+}
+
+void
+remove_child_process (struct thread *cp)
+{
+  list_remove (&cp->child_elem);
+  palloc_free_page (cp);
+}
+
+static bool arguments_stack (char **parse, int count, void **esp)
+{
+  int total_arguments_length = 0, argc = count, i, argument_length;
+  char **argv;
+
+  for (i = 0; i < argc; i ++) 
+    total_arguments_length += (strlen (parse[i]) + 4) & (-4);
+
+  *esp -= total_arguments_length
+    + 4 /* padding */
+    + 4 * argc /* argv data */
+    + 4 /* argv */
+    + 4 /* argc */
+    + 4; /* return address */
+
+  argv = *esp + 4 * 3;
+  memset (argv + 4 * argc, 0, total_arguments_length);
+
+  *argv = (char*)argv + 4;
+  argv[0] = (char *)argv + 4 * argc + 4 /* padding */;
+  for (i = 0; i < argc - 1; i ++)
+  {
+    argument_length = strlen (parse[i]) + 1;
+    memcpy (argv[i], parse[i], argument_length);
+    argv[i + 1] = argv[i] + argument_length;
+  }
+  argument_length = strlen (parse[argc-1]) + 1;
+  memcpy (argv[argc-1], parse[argc-1], argument_length);
+  *(char ***)(*esp + 8) = argv;
+  *(int *)(*esp + 4) = count;
+  *(int *)(*esp) = 0;
+
+  return true;
 }
 
 /* load() helpers. */
