@@ -119,6 +119,9 @@ struct thread
     struct semaphore load_sema;
     struct semaphore exit_sema;
     int exit_status;
+
+    struct list file_list;
+    int max_fd;
 #endif
 
     /* Owned by thread.c. */

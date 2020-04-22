@@ -20,9 +20,21 @@
 #include "threads/malloc.h"
 #include "threads/synch.h"
 
+struct file_descriptor
+{
+  int fd;
+  struct file* file;
+  struct list_elem elem;
+};
+
+static bool is_same_fd (const struct list_elem *e, void* aux)
+{
+  return list_entry (e, struct file_descriptor, elem) -> fd == (int)aux;
+}
 static thread_func start_process NO_RETURN;
 static bool load (const char *cmdline, void (**eip) (void), void **esp);
 static bool arguments_stack (char **parse, int count, void **esp);
+static void close_process_all_file (struct thread *t);
 
 /* Starts a new thread running a user program loaded from
    FILENAME.  The new thread may be scheduled (and may even exit)
@@ -52,8 +64,9 @@ process_execute (const char *file_name)
   if (child != NULL) 
   {
     sema_down (&child->load_sema);
-    if (!child->is_load)
+    if (!child->is_load) {
       tid = -1;
+    }
   }
   else
     tid = -1;
@@ -90,22 +103,25 @@ start_process (void *file_name_)
   for (i = 0; i < count; i ++)
   {
     parsed[i] = token;
-    while (token < save_ptr && *token != '\0')
+    int length = strlen (token);
+    token += length + 1;
+    while (token < save_ptr && (*token == ' ' || *token == '\t'))
       token ++;
-    token++;
   }
   success = load (parsed[0], &if_.eip, &if_.esp);
   success = success && arguments_stack (parsed, count, &if_.esp);
+  unsigned file_name_length = strlen (parsed[0]);
+  current->process_name = (char *) malloc (sizeof (char) * file_name_length);
+  strlcpy (current->process_name, parsed[0], file_name_length+1);
+  free (parsed);
 
-  /* casting to bool type */
-  current->is_load = success ? true : false;
+  current->is_load = success;
   sema_up (&current->load_sema);
 
   /* If load failed, quit. */
   palloc_free_page (file_name_);
   if (!success)
     thread_exit ();
-
   /* Start the user process by simulating a return from an
      interrupt, implemented by intr_exit (in
      threads/intr-stubs.S).  Because intr_exit takes all of its
@@ -145,6 +161,9 @@ process_exit (void)
   struct thread *cur = thread_current ();
   uint32_t *pd;
 
+  close_process_all_file (cur);
+  free (cur->process_name);
+
   /* Destroy the current process's page directory and switch back
      to the kernel-only page directory. */
   pd = cur->pagedir;
@@ -177,6 +196,41 @@ process_activate (void)
   /* Set thread's kernel stack for use in processing
      interrupts. */
   tss_update ();
+}
+
+int
+process_add_file (struct file *f)
+{
+  struct thread *t = thread_current ();
+
+  struct file_descriptor* file_descriptor;
+  file_descriptor = (struct file_descriptor*) malloc (sizeof (struct file_descriptor));
+  file_descriptor->fd = t->max_fd++;
+  file_descriptor->file = f;
+
+  list_push_back (&t->file_list, &file_descriptor->elem);
+  return file_descriptor->fd;
+}
+struct file *
+process_get_file (int fd)
+{
+  struct thread *t = thread_current ();
+  struct list_elem * e = list_search (&t->file_list, is_same_fd, (void *)fd);
+  return e == list_end (&t->file_list) ? NULL : list_entry (e, struct file_descriptor, elem)->file;
+}
+void 
+process_close_file (int fd)
+{
+  struct thread *t = thread_current ();
+  struct list_elem * e = list_search (&t->file_list, is_same_fd, (void *)fd);
+
+  if (e == list_end (&t->file_list))
+    return;
+
+  struct file_descriptor *descriptor = list_entry(e, struct file_descriptor, elem);
+  file_close (descriptor->file);
+  list_remove (e);
+  free (descriptor);
 }
 
 /* We load ELF binaries.  The following definitions are taken
@@ -568,4 +622,13 @@ install_page (void *upage, void *kpage, bool writable)
      address, then map our page there. */
   return (pagedir_get_page (t->pagedir, upage) == NULL
           && pagedir_set_page (t->pagedir, upage, kpage, writable));
+}
+
+static void 
+close_process_all_file (struct thread *t)
+{
+  while (t->max_fd != 2) {
+    int current_close_fd = t->max_fd--;
+    process_close_file (current_close_fd);
+  }
 }

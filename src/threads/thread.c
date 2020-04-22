@@ -236,6 +236,8 @@ thread_create (const char *name, int priority,
   list_push_back (&parent->children, &t->child_elem);
   sema_init (&t->load_sema, 0);
   sema_init (&t->exit_sema, 0);
+  list_init (&t->file_list);
+  t->max_fd = 2;
 #endif
 
   intr_set_level (old_level);
@@ -696,9 +698,16 @@ thread_schedule_tail (struct thread *prev)
      palloc().) */
   if (prev != NULL && prev->status == THREAD_DYING && prev != initial_thread) 
     {
+  /* Activate the new address space. */
       ASSERT (prev != cur);
+#ifdef USERPROG
       if (!prev->is_load)
         palloc_free_page (prev);
+      
+#else
+      palloc_free_page (prev);
+#endif
+      
     }
 }
 
