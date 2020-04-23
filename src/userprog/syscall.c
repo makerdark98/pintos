@@ -76,7 +76,7 @@ syscall_handler (struct intr_frame *f UNUSED)
       f->eax = syscall_filesize ((int)args[0]);
       break;
     case SYS_READ:                   /* Read from a file. */
-      get_argument (f->esp, args, 3, 4);
+      get_argument (f->esp, args, 3, 16);
       f->eax = syscall_read ((int)args[0], (void *)args[1], (unsigned)args[2]);
       break;
     case SYS_WRITE:                  /* Write to a file. */
@@ -90,9 +90,11 @@ syscall_handler (struct intr_frame *f UNUSED)
     case SYS_TELL:                   /* Report current position in a file. */
       get_argument (f->esp, args, 1, 0);
       f->eax = syscall_tell ((int)args[0]);
+      break;
     case SYS_CLOSE:                  /* Close a file. */
       get_argument (f->esp, args, 1, 0);
       syscall_close ((int)args[0]);
+      break;
     default:
       printf ("system call!\n");
       thread_exit ();
@@ -149,6 +151,8 @@ static bool syscall_remove (const char *file)
 }
 static int syscall_open (const char *filename)
 {
+  if (filename == NULL || strcmp (filename, "") == 0)
+    return -1;
   struct file* file = filesys_open (filename);
 
   if (!file)
@@ -176,6 +180,7 @@ static int syscall_read (int fd, void *buffer, unsigned length)
   if (!file)
     return -1;
 
+  check_address (buffer);
   int retval;
   lock_acquire (&filesys_lock);
   retval = file_read (file, buffer, length);

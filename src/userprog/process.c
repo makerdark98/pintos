@@ -227,7 +227,7 @@ process_close_file (int fd)
   if (e == list_end (&t->file_list))
     return;
 
-  struct file_descriptor *descriptor = list_entry(e, struct file_descriptor, elem);
+  struct file_descriptor *descriptor = list_entry (e, struct file_descriptor, elem);
   file_close (descriptor->file);
   list_remove (e);
   free (descriptor);
@@ -627,8 +627,11 @@ install_page (void *upage, void *kpage, bool writable)
 static void 
 close_process_all_file (struct thread *t)
 {
-  while (t->max_fd != 2) {
-    int current_close_fd = t->max_fd--;
-    process_close_file (current_close_fd);
+  struct list_elem *e;
+
+  while (!list_empty (&t->file_list))
+  {
+    e = list_front (&t->file_list);
+    process_close_file (list_entry (e, struct file_descriptor, elem)->fd);
   }
 }
