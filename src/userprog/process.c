@@ -43,6 +43,7 @@ static void close_process_all_file (struct thread *t);
 tid_t
 process_execute (const char *file_name) 
 {
+  struct thread *current = thread_current ();
   char *fn_copy;
   tid_t tid;
 
@@ -59,16 +60,10 @@ process_execute (const char *file_name)
   if (tid == TID_ERROR)
     palloc_free_page (fn_copy); 
 
-  struct thread *child = get_child_process (tid);
 
-  if (child != NULL) 
-  {
-    sema_down (&child->load_sema);
-    if (!child->is_load) {
-      tid = -1;
-    }
-  }
-  else
+  sema_down (&current->exec_sema);
+  struct thread *child = get_child_process (tid);
+  if (child == NULL || !child->is_load)  
     tid = -1;
   return tid;
 }
@@ -116,10 +111,11 @@ start_process (void *file_name_)
   free (parsed);
 
   current->is_load = success;
-  sema_up (&current->load_sema);
 
   /* If load failed, quit. */
   palloc_free_page (file_name_);
+
+  sema_up (&current->parent->exec_sema);
   if (!success)
     thread_exit ();
   /* Start the user process by simulating a return from an
@@ -163,6 +159,7 @@ process_exit (void)
 
   close_process_all_file (cur);
   free (cur->process_name);
+  list_remove (&cur->child_elem);
 
   /* Destroy the current process's page directory and switch back
      to the kernel-only page directory. */

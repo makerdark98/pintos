@@ -116,7 +116,7 @@ struct thread
 
     int success_bear;
     bool is_load;
-    struct semaphore load_sema;
+    struct semaphore exec_sema;
     struct semaphore exit_sema;
     int exit_status;
 

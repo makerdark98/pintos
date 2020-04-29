@@ -234,7 +234,6 @@ thread_create (const char *name, int priority,
   t->parent = parent;
   t->is_load = false;
   list_push_back (&parent->children, &t->child_elem);
-  sema_init (&t->load_sema, 0);
   sema_init (&t->exit_sema, 0);
   list_init (&t->file_list);
   t->max_fd = 2;
@@ -623,6 +622,7 @@ init_thread (struct thread *t, const char *name, int priority)
   list_push_back (&all_list, &t->allelem);
 #ifdef USERPROG
   list_init (&t->children);
+  sema_init (&t->exec_sema, 0);
 #endif
 }
 
@@ -703,7 +703,6 @@ thread_schedule_tail (struct thread *prev)
 #ifdef USERPROG
       if (!prev->is_load)
         palloc_free_page (prev);
-      
 #else
       palloc_free_page (prev);
 #endif
