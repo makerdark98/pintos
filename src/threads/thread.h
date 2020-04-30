@@ -122,6 +122,8 @@ struct thread
 
     struct list file_list;
     int max_fd;
+
+    struct file* executed_file;
 #endif
 
     /* Owned by thread.c. */

@@ -127,8 +127,29 @@ sema_up (struct semaphore *sema)
   }
   sema->value++;
   intr_set_level (old_level);
-  //if (e != NULL && !intr_context ())
-  //  thread_yield ();
+
+  if (e != NULL && !intr_context ())
+    thread_yield ();
+}
+
+void
+sema_up_preemption (struct semaphore *sema)
+{
+  enum intr_level old_level;
+  struct list_elem *e = NULL;
+
+  ASSERT (sema != NULL);
+
+  old_level = intr_disable ();
+  if (!list_empty (&sema->waiters))
+  {
+    e = list_max (&sema->waiters,
+        less_thread_priority, NULL);
+    list_remove (e);
+    thread_unblock (list_entry (e, struct thread, elem));
+  }
+  sema->value++;
+  intr_set_level (old_level);
 }
 
 static void sema_test_helper (void *sema_);

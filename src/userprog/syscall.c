@@ -8,7 +8,6 @@
 #include "threads/synch.h"
 #include "userprog/process.h"
 
-static struct lock filesys_lock;
 typedef int pid_t;
 typedef void* arg_t;
 static void check_address (void *addr);
@@ -131,7 +130,6 @@ void syscall_exit (int status)
 static pid_t syscall_exec (const char *cmd_line)
 {
   pid_t retval = process_execute (cmd_line);
-  if (retval == -1) syscall_exit (-1);
   return retval;
 }
 static int syscall_wait (pid_t pid)

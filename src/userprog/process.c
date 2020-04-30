@@ -157,9 +157,18 @@ process_exit (void)
   struct thread *cur = thread_current ();
   uint32_t *pd;
 
+  list_remove (&cur->child_elem);
+  detach_children_process (cur);
   close_process_all_file (cur);
   free (cur->process_name);
-  list_remove (&cur->child_elem);
+
+  if (cur->executed_file != NULL)
+  {
+    file_allow_write (cur->executed_file);
+    file_close (cur->executed_file);
+  }
+
+
 
   /* Destroy the current process's page directory and switch back
      to the kernel-only page directory. */
@@ -228,6 +237,16 @@ process_close_file (int fd)
   file_close (descriptor->file);
   list_remove (e);
   free (descriptor);
+}
+void
+detach_children_process (struct thread *parent)
+{
+  while (!list_empty (&parent->children)) {
+    list_entry (
+        list_front (&parent->children), struct thread, child_elem)->parent = NULL;
+    list_pop_front(&parent->children);
+
+  }
 }
 
 /* We load ELF binaries.  The following definitions are taken
@@ -320,13 +339,18 @@ load (const char *file_name, void (**eip) (void), void **esp)
   process_activate ();
 
   /* Open executable file. */
+  lock_acquire (&filesys_lock);
   file = filesys_open (file_name);
   if (file == NULL) 
     {
+      lock_release (&filesys_lock);
       printf ("load: %s: open failed\n", file_name);
       goto done; 
     }
 
+  t->executed_file = file;
+  file_deny_write (file);
+  lock_release (&filesys_lock);
   /* Read and verify executable header. */
   if (file_read (file, &ehdr, sizeof ehdr) != sizeof ehdr
       || memcmp (ehdr.e_ident, "\177ELF\1\1\1", 7)
@@ -410,7 +434,6 @@ load (const char *file_name, void (**eip) (void), void **esp)
 
  done:
   /* We arrive here whether the load is successful or not. */
-  file_close (file);
   return success;
 }
 
